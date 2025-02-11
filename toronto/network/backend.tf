@@ -9,7 +9,7 @@
 # Reference: https://docs.oracle.com/en-us/iaas/Content/API/SDKDocs/terraformUsingObjectStore.htm
 terraform {
   backend "s3" {
-    key      = "toronto/identity/terraform.tfstate"
+    key      = "toronto/network/terraform.tfstate"
     bucket   = "oci-terraform-state-poc"
     region   = "us-east-1"
     encrypt = true
