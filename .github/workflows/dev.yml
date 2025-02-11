@@ -94,9 +94,7 @@ jobs:
                                                -var="region=${{ secrets.OCI_REGION }}" \
                                                -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
                                                -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
-                                               -var="aws_region=${{ secrets.AWS_REGION }}" \
-                                               -var="aws_role_arn=${{ secrets.AWS_ROLE_ARN }}" \
-                                               -var="aws_s3_bucket=${{ secrets.AWS_S3_BUCKET }}"
+                                             
 
     - name: Upload Terraform Plan
       uses: actions/upload-artifact@v4
