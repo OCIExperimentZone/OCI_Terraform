@@ -13,11 +13,11 @@ jobs:
       services: ${{ steps.set-services.outputs.services }}
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Filter Paths
       id: filter
-      uses: dorny/paths-filter@v3
+      uses: dorny/paths-filter@v4
       with:
         filters: |
           identity:
@@ -58,10 +58,10 @@ jobs:
 
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v3
+      uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
         aws-region: ${{ secrets.AWS_REGION }}
@@ -99,7 +99,7 @@ jobs:
                                                -var="aws_s3_bucket=${{ secrets.AWS_S3_BUCKET }}"
 
     - name: Upload Terraform Plan
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: terraform-plan-${{ matrix.service }}
         path: toronto/${{ matrix.service }}/terraform.tfplan
