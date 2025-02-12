@@ -52,10 +52,14 @@ jobs:
 
   terraform_plan:
     needs: detect_changes
+    if: needs.detect_changes.outputs.services != '{"services": []}'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect_changes.outputs.services).services || [] }}
     steps:
       - name: Debug Output
-        run: echo "Services Output: ${{ needs.detect_changes.outputs.services }}"
+        run: 'echo "Services Output: ${{ needs.detect_changes.outputs.services }}"'
 
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -102,12 +106,12 @@ jobs:
           path: toronto/${{ matrix.service }}/terraform.tfplan
 
   terraform_apply:
-    needs: terraform_plan
-    if: needs.detect_changes.outputs.services != '{"services": []}' # Ensure we only run if services exist
+    needs: [detect_changes, terraform_plan]
     runs-on: ubuntu-latest
+    if: needs.detect_changes.outputs.services != '{"services": []}'
     strategy:
       matrix:
-        service: ${{ fromJson(needs.detect_changes.outputs.services).services }}
+        service: ${{ fromJson(needs.detect_changes.outputs.services).services || [] }}
     permissions:
       id-token: write
       contents: read
@@ -127,13 +131,23 @@ jobs:
         with:
           terraform_version: 1.10.5
 
+      - name: Set Up OCI Environment Variables
+        run: |
+          echo "OCI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+          echo "OCI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+          echo "OCI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
+          echo "OCI_FINGERPRINT=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
+          echo "${{ secrets.OCI_PRIVATE_KEY }}" > oci_api_key.pem
+          chmod 600 oci_api_key.pem
+          echo "OCI_PRIVATE_KEY_PATH=$PWD/oci_api_key.pem" >> $GITHUB_ENV
+
       - name: Download Terraform Plan
         uses: actions/download-artifact@v4
         with:
           name: terraform-plan-${{ matrix.service }}
           path: toronto/${{ matrix.service }}
 
-      - name: Terraform Apply (Requires Approval)
+      - name: Terraform Apply
         run: |
           cd toronto/${{ matrix.service }}
           terraform apply terraform.tfplan
