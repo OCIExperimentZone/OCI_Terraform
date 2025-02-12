@@ -12,43 +12,43 @@ jobs:
     outputs:
       services: ${{ steps.set-services.outputs.services }}
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Filter Paths
-      id: filter
-      uses: dorny/paths-filter@v3
-      with:
-        filters: |
-          identity:
-            - 'toronto/identity/**'
-          network:
-            - 'toronto/network/**'
-          storage:
-            - 'toronto/storage/**'
+      - name: Filter Paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            identity:
+              - 'toronto/identity/**'
+            network:
+              - 'toronto/network/**'
+            storage:
+              - 'toronto/storage/**'
 
-    - name: Determine Changed Services
-      id: set-services
-      run: |
-        SERVICES=()
-        if [[ "${{ steps.filter.outputs.identity }}" == "true" ]]; then
-          SERVICES+=('"identity"')
-        fi
-        if [[ "${{ steps.filter.outputs.network }}" == "true" ]]; then
-          SERVICES+=('"network"')
-        fi
-        if [[ "${{ steps.filter.outputs.storage }}" == "true" ]]; then
-          SERVICES+=('"storage"')
-        fi
+      - name: Determine Changed Services
+        id: set-services
+        run: |
+          SERVICES=()
+          if [[ "${{ steps.filter.outputs.identity }}" == "true" ]]; then
+            SERVICES+=('"identity"')
+          fi
+          if [[ "${{ steps.filter.outputs.network }}" == "true" ]]; then
+            SERVICES+=('"network"')
+          fi
+          if [[ "${{ steps.filter.outputs.storage }}" == "true" ]]; then
+            SERVICES+=('"storage"')
+          fi
 
-        if [[ ${#SERVICES[@]} -eq 0 ]]; then
-          SERVICES_JSON='{"services": []}'  # Ensure a valid JSON format even if empty
-        else
-          SERVICES_JSON="{\"services\": [$(IFS=,; echo "${SERVICES[*]}")]}"
-        fi
+          if [[ ${#SERVICES[@]} -eq 0 ]]; then
+            SERVICES_JSON='{"services": []}'  # Ensure a valid JSON format even if empty
+          else
+            SERVICES_JSON="{\"services\": [$(IFS=,; echo "${SERVICES[*]}")]}"
+          fi
 
-        echo "services=$SERVICES_JSON" >> $GITHUB_ENV
-        echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
+          echo "services=$SERVICES_JSON" >> $GITHUB_ENV
+          echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
 
   terraform_plan:
     needs: detect_changes
@@ -113,27 +113,27 @@ jobs:
       contents: read
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-        aws-region: ${{ secrets.AWS_REGION }}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Install Terraform
-      uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_version: 1.10.5
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.10.5
 
-    - name: Download Terraform Plan
-      uses: actions/download-artifact@v4
-      with:
-        name: terraform-plan-${{ matrix.service }}
-        path: toronto/${{ matrix.service }}
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ matrix.service }}
+          path: toronto/${{ matrix.service }}
 
-    - name: Terraform Apply (Requires Approval)
-      run: |
-        cd toronto/${{ matrix.service }}
-        terraform apply terraform.tfplan
+      - name: Terraform Apply (Requires Approval)
+        run: |
+          cd toronto/${{ matrix.service }}
+          terraform apply terraform.tfplan
