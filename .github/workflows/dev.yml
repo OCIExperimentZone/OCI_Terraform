@@ -55,7 +55,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Debug Output
-        run: echo "Services Output: ${{ needs.detect_changes.outputs.services }}"
+        run: |
+          echo "Services Output: ${{ needs.detect_changes.outputs.services }}"
 
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -103,11 +104,11 @@ jobs:
 
   terraform_apply:
     needs: terraform_plan
-    if: needs.detect_changes.outputs.services != '{"services": []}'  # Ensure we only run if services exist
+    if: needs.detect_changes.outputs.services != '{"services":[]}' # Ensure we only run if services exist
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: ${{ fromJson(needs.detect_changes.outputs.services).services || [] }}
+        service: ${{ fromJson(needs.detect_changes.outputs.services).services }}
     permissions:
       id-token: write
       contents: read
