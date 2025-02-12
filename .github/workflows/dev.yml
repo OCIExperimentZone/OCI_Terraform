@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - Dev
-  workflow_dispatch: # Allows manual trigger
+  workflow_dispatch:
 
 jobs:
   detect_changes:
@@ -12,99 +12,42 @@ jobs:
     outputs:
       services: ${{ steps.set-services.outputs.services }}
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Filter Paths
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            identity:
-              - 'toronto/identity/**'
-            network:
-              - 'toronto/network/**'
-            storage:
-              - 'toronto/storage/**'
+    - name: Filter Paths
+      id: filter
+      uses: dorny/paths-filter@v3
+      with:
+        filters: |
+          identity:
+            - 'toronto/identity/**'
+          network:
+            - 'toronto/network/**'
+          storage:
+            - 'toronto/storage/**'
 
-      - name: Determine Changed Services
-        id: set-services
-        run: |
-          SERVICES=()
-          if [[ "${{ steps.filter.outputs.identity }}" == "true" ]]; then
-            SERVICES+=('"identity"')
-          fi
-          if [[ "${{ steps.filter.outputs.network }}" == "true" ]]; then
-            SERVICES+=('"network"')
-          fi
-          if [[ "${{ steps.filter.outputs.storage }}" == "true" ]]; then
-            SERVICES+=('"storage"')
-          fi
+    - name: Determine Changed Services
+      id: set-services
+      run: |
+        SERVICES=()
+        if [[ "${{ steps.filter.outputs.identity }}" == "true" ]]; then
+          SERVICES+=('"identity"')
+        fi
+        if [[ "${{ steps.filter.outputs.network }}" == "true" ]]; then
+          SERVICES+=('"network"')
+        fi
+        if [[ "${{ steps.filter.outputs.storage }}" == "true" ]]; then
+          SERVICES+=('"storage"')
+        fi
 
-          if [[ ${#SERVICES[@]} -eq 0 ]]; then
-            SERVICES_JSON='{"services": []}'  # Ensure a valid JSON format even if empty
-          else
-            SERVICES_JSON="{\"services\": [$(IFS=,; echo "${SERVICES[*]}")]}"
-          fi
+        SERVICES_JSON="{\"services\": [$(IFS=,; echo "${SERVICES[*]}")]}"
 
-          echo "services=$SERVICES_JSON" >> $GITHUB_ENV
-          echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
+        echo "services=$SERVICES_JSON" >> $GITHUB_ENV
+        echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
 
-  terraform_plan:
+  deploy:
     needs: detect_changes
-    runs-on: ubuntu-latest
-    steps:
-      - name: Debug Output
-        run: |
-          echo "Services Output: ${{ needs.detect_changes.outputs.services }}"
-
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-      
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.10.5
-
-      - name: Set Up OCI Environment Variables
-        run: |
-          echo "OCI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
-          echo "OCI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
-          echo "OCI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
-          echo "OCI_FINGERPRINT=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
-          echo "${{ secrets.OCI_PRIVATE_KEY }}" > oci_api_key.pem
-          chmod 600 oci_api_key.pem
-          echo "OCI_PRIVATE_KEY_PATH=$PWD/oci_api_key.pem" >> $GITHUB_ENV
-
-      - name: Terraform Init
-        run: |
-          cd toronto/${{ matrix.service }}
-          terraform init 
-
-      - name: Terraform Plan
-        run: |
-          cd toronto/${{ matrix.service }}
-          terraform plan -out=terraform.tfplan -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
-                                                 -var="user_ocid=${{ secrets.OCI_USER }}" \
-                                                 -var="region=${{ secrets.OCI_REGION }}" \
-                                                 -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
-                                                 -var="private_key_path=$OCI_PRIVATE_KEY_PATH"
-
-      - name: Upload Terraform Plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-plan-${{ matrix.service }}
-          path: toronto/${{ matrix.service }}/terraform.tfplan
-
-  terraform_apply:
-    needs: terraform_plan
-    if: needs.detect_changes.outputs.services != '{"services":[]}' # Ensure we only run if services exist
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -114,27 +57,47 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.10.5
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.5.6
 
-      - name: Download Terraform Plan
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-plan-${{ matrix.service }}
-          path: toronto/${{ matrix.service }}
+    - name: Set Up OCI Environment Variables
+      run: |
+        echo "OCI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+        echo "OCI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+        echo "OCI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
+        echo "OCI_FINGERPRINT=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
+        echo "${{ secrets.OCI_PRIVATE_KEY }}" > oci_api_key.pem
+        chmod 600 oci_api_key.pem
+        echo "OCI_PRIVATE_KEY_PATH=$PWD/oci_api_key.pem" >> $GITHUB_ENV
 
-      - name: Terraform Apply (Requires Approval)
-        run: |
-          cd toronto/${{ matrix.service }}
-          terraform apply terraform.tfplan
+    - name: Terraform Init
+      run: |
+        cd toronto/${{ matrix.service }}
+        terraform init 
+
+    - name: Terraform Plan
+      run: |
+        cd toronto/${{ matrix.service }}
+        terraform plan -out=terraform.tfplan -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+                                               -var="user_ocid=${{ secrets.OCI_USER }}" \
+                                               -var="region=${{ secrets.OCI_REGION }}" \
+                                               -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
+                                               -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
+                                             
+
+    - name: Upload Terraform Plan
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-plan-${{ matrix.service }}
+        path: toronto/${{ matrix.service }}/terraform. 
