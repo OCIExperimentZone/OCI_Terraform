@@ -41,7 +41,11 @@ jobs:
           SERVICES+=('"storage"')
         fi
 
-        SERVICES_JSON="{\"services\": [$(IFS=,; echo "${SERVICES[*]}")]}"
+        if [[ ${#SERVICES[@]} -eq 0 ]]; then
+          SERVICES_JSON='{"services": []}'  # Ensure a valid JSON format even if empty
+        else
+          SERVICES_JSON="{\"services\": [$(IFS=,; echo "${SERVICES[*]}")]}"
+        fi
 
         echo "services=$SERVICES_JSON" >> $GITHUB_ENV
         echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
@@ -49,66 +53,57 @@ jobs:
   terraform_plan:
     needs: detect_changes
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        service: ${{ fromJson(needs.detect_changes.outputs.services).services }}
-    permissions:
-      id-token: write
-      contents: read
-
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Debug Output
+        run: echo "Services Output: ${{ needs.detect_changes.outputs.services }}"
 
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-        aws-region: ${{ secrets.AWS_REGION }}
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Install Terraform
-      uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_version: 1.10.5
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Set Up OCI Environment Variables
-      run: |
-        echo "OCI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
-        echo "OCI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
-        echo "OCI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
-        echo "OCI_FINGERPRINT=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
-        echo "${{ secrets.OCI_PRIVATE_KEY }}" > oci_api_key.pem
-        chmod 600 oci_api_key.pem
-        echo "OCI_PRIVATE_KEY_PATH=$PWD/oci_api_key.pem" >> $GITHUB_ENV
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.10.5
 
-    - name: Terraform Init
-      run: |
-        cd toronto/${{ matrix.service }}
-        terraform init 
+      - name: Set Up OCI Environment Variables
+        run: |
+          echo "OCI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+          echo "OCI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+          echo "OCI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
+          echo "OCI_FINGERPRINT=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
+          echo "${{ secrets.OCI_PRIVATE_KEY }}" > oci_api_key.pem
+          chmod 600 oci_api_key.pem
+          echo "OCI_PRIVATE_KEY_PATH=$PWD/oci_api_key.pem" >> $GITHUB_ENV
 
-    - name: Terraform Plan
-      run: |
-        cd toronto/${{ matrix.service }}
-        terraform plan -out=terraform.tfplan -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
-                                               -var="user_ocid=${{ secrets.OCI_USER }}" \
-                                               -var="region=${{ secrets.OCI_REGION }}" \
-                                               -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
-                                               -var="private_key_path=$OCI_PRIVATE_KEY_PATH"
+      - name: Terraform Init
+        run: |
+          cd toronto/${{ matrix.service }}
+          terraform init 
 
-    - name: Upload Terraform Plan
-      uses: actions/upload-artifact@v4
-      with:
-        name: terraform-plan-${{ matrix.service }}
-        path: toronto/${{ matrix.service }}/terraform.tfplan
+      - name: Terraform Plan
+        run: |
+          cd toronto/${{ matrix.service }}
+          terraform plan -out=terraform.tfplan -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+                                                 -var="user_ocid=${{ secrets.OCI_USER }}" \
+                                                 -var="region=${{ secrets.OCI_REGION }}" \
+                                                 -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
+                                                 -var="private_key_path=$OCI_PRIVATE_KEY_PATH"
 
-    - name: Set Terraform Plan Outputs
-      id: set-plan-output
-      run: |
-        echo "services=${{ needs.detect_changes.outputs.services }}" >> $GITHUB_ENV
-        echo "services=${{ needs.detect_changes.outputs.services }}" >> $GITHUB_OUTPUT
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ matrix.service }}
+          path: toronto/${{ matrix.service }}/terraform.tfplan
 
   terraform_apply:
     needs: terraform_plan
+    if: needs.detect_changes.outputs.services != '{"services": []}' # Ensure we only run if services exist
     runs-on: ubuntu-latest
     strategy:
       matrix:
