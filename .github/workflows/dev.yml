@@ -69,7 +69,7 @@ jobs:
     - name: Install Terraform
       uses: hashicorp/setup-terraform@v2
       with:
-        terraform_version: 1.5.6
+        terraform_version: 1.10.5
 
     - name: Set Up OCI Environment Variables
       run: |
@@ -101,12 +101,18 @@ jobs:
         name: terraform-plan-${{ matrix.service }}
         path: toronto/${{ matrix.service }}/terraform.tfplan
 
+    - name: Set Terraform Plan Outputs
+      id: set-plan-output
+      run: |
+        echo "services=${{ needs.detect_changes.outputs.services }}" >> $GITHUB_ENV
+        echo "services=${{ needs.detect_changes.outputs.services }}" >> $GITHUB_OUTPUT
+
   terraform_apply:
     needs: terraform_plan
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: ${{ fromJson(needs.terraform_plan.outputs.services).services }}
+        service: ${{ fromJson(needs.detect_changes.outputs.services).services }}
     permissions:
       id-token: write
       contents: read
@@ -124,7 +130,7 @@ jobs:
     - name: Install Terraform
       uses: hashicorp/setup-terraform@v2
       with:
-        terraform_version: 1.5.6
+        terraform_version: 1.10.5
 
     - name: Download Terraform Plan
       uses: actions/download-artifact@v4
@@ -135,4 +141,4 @@ jobs:
     - name: Terraform Apply (Requires Approval)
       run: |
         cd toronto/${{ matrix.service }}
-        terraform apply  terraform.tfplan
+        terraform apply terraform.tfplan
