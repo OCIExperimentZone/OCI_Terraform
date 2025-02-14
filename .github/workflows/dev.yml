@@ -21,33 +21,107 @@ jobs:
       with:
         filters: |
           identity:
-            - 'toronto/identity/**'
+            - '**/identity/**'
           network:
-            - 'toronto/network/**'
+            - '**/network/**'
           storage:
-            - 'toronto/storage/**'
+            - '**/storage/**'
 
-    - name: Determine Changed Services
+    - name: Determine Changed Services and Regions
       id: set-services
       run: |
+        # Find all changed folders
+        CHANGES=$(find . -type f -name "*.tf" -exec dirname {} \; | sort -u)
+        
+        # Initialize arrays
         SERVICES=()
-        if [[ "${{ steps.filter.outputs.identity }}" == "true" ]]; then
-          SERVICES+=('"identity"')
-        fi
-        if [[ "${{ steps.filter.outputs.network }}" == "true" ]]; then
-          SERVICES+=('"network"')
-        fi
-        if [[ "${{ steps.filter.outputs.storage }}" == "true" ]]; then
-          SERVICES+=('"storage"')
-        fi
-
-        SERVICES_JSON="{\"services\": [$(IFS=,; echo "${SERVICES[*]}")]}"
-
+        
+        # Process each changed folder
+        while IFS= read -r folder; do
+          if [[ $folder == *"/identity"* ]]; then
+            SERVICES+=('"identity"')
+          fi
+          if [[ $folder == *"/network"* ]]; then
+            SERVICES+=('"network"')
+          fi
+          if [[ $folder == *"/storage"* ]]; then
+            SERVICES+=('"storage"')
+          fi
+        done <<< "$CHANGES"
+        
+        # Remove duplicates and create JSON
+        UNIQUE_SERVICES=($(echo "${SERVICES[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
+        SERVICES_JSON="{\"services\": [$(IFS=,; echo "${UNIQUE_SERVICES[*]}")]}"
+        
         echo "services=$SERVICES_JSON" >> $GITHUB_ENV
         echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
 
-  deploy:
+  terraform_plan:
     needs: detect_changes
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect_changes.outputs.services).services }}
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.11.0
+
+    - name: Set Up OCI Environment Variables
+      run: |
+        echo "OCI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+        echo "OCI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+        echo "OCI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
+        echo "OCI_FINGERPRINT=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
+        echo "${{ secrets.OCI_PRIVATE_KEY }}" > oci_api_key.pem
+        chmod 600 oci_api_key.pem
+        echo "OCI_PRIVATE_KEY_PATH=$PWD/oci_api_key.pem" >> $GITHUB_ENV
+
+    - name: Terraform Init and Plan
+      run: |
+        # Find all directories containing terraform files for this service
+        TF_DIRS=$(find . -type f -name "*.tf" -exec dirname {} \; | sort -u | grep -i "/${{ matrix.service }}")
+        
+        # Process each directory
+        while IFS= read -r TF_DIR; do
+          if [ -n "$TF_DIR" ]; then
+            echo "Processing Terraform directory: $TF_DIR"
+            cd "$GITHUB_WORKSPACE"
+            cd "$TF_DIR"
+            
+            terraform init
+            terraform plan -out=tfplan \
+              -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+              -var="user_ocid=${{ secrets.OCI_USER }}" \
+              -var="region=${{ secrets.OCI_REGION }}" \
+              -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
+              -var="private_key_path=$OCI_PRIVATE_KEY_PATH"
+          fi
+        done <<< "$TF_DIRS"
+
+    - name: Upload Terraform Plan
+      uses: actions/upload-artifact@v4
+      with:
+        name: tfplan-${{ matrix.service }}
+        path: "**/tfplan"
+        retention-days: 1
+
+  terraform_apply:
+    needs: [terraform_plan, detect_changes]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -69,7 +143,7 @@ jobs:
     - name: Install Terraform
       uses: hashicorp/setup-terraform@v2
       with:
-        terraform_version: 1.5.6
+        terraform_version: 1.11.0
 
     - name: Set Up OCI Environment Variables
       run: |
@@ -81,23 +155,23 @@ jobs:
         chmod 600 oci_api_key.pem
         echo "OCI_PRIVATE_KEY_PATH=$PWD/oci_api_key.pem" >> $GITHUB_ENV
 
-    - name: Terraform Init
-      run: |
-        cd toronto/${{ matrix.service }}
-        terraform init 
-
-    - name: Terraform Plan
-      run: |
-        cd toronto/${{ matrix.service }}
-        terraform plan -out=terraform.tfplan -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
-                                               -var="user_ocid=${{ secrets.OCI_USER }}" \
-                                               -var="region=${{ secrets.OCI_REGION }}" \
-                                               -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
-                                               -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
-                                             
-
-    - name: Upload Terraform Plan
-      uses: actions/upload-artifact@v4
+    - name: Download Terraform Plan
+      uses: actions/download-artifact@v4
       with:
-        name: terraform-plan-${{ matrix.service }}
-        path: toronto/${{ matrix.service }}/terraform. 
+        name: tfplan-${{ matrix.service }}
+        path: .
+
+    - name: Terraform Apply
+      run: |
+        # Find the directory containing terraform files
+        TF_DIR=$(find . -type f -name "*.tf" -exec dirname {} \; | sort -u | grep -i "${{ matrix.service }}" | head -n 1)
+        if [ -z "$TF_DIR" ]; then
+          echo "No Terraform directory found for service ${{ matrix.service }}"
+          exit 1
+        fi
+        
+        cd "$TF_DIR"
+        terraform init
+        terraform apply -auto-approve tfplan
+
+
