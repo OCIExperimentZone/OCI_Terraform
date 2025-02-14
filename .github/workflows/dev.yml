@@ -33,6 +33,14 @@ jobs:
         # Find all changed folders
         CHANGES=$(find . -type f -name "*.tf" -exec dirname {} \; | sort -u)
         
+        # Check if there are any changes
+        if [ -z "$CHANGES" ]; then
+          echo "No Terraform changes detected in any directory"
+          echo "services={\"services\": []}" >> $GITHUB_ENV
+          echo "services={\"services\": []}" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
         # Initialize arrays
         SERVICES=()
         
@@ -49,15 +57,25 @@ jobs:
           fi
         done <<< "$CHANGES"
         
+        # Check if any services were matched
+        if [ ${#SERVICES[@]} -eq 0 ]; then
+          echo "No matching services found in changed directories"
+          echo "services={\"services\": []}" >> $GITHUB_ENV
+          echo "services={\"services\": []}" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
         # Remove duplicates and create JSON
         UNIQUE_SERVICES=($(echo "${SERVICES[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
         SERVICES_JSON="{\"services\": [$(IFS=,; echo "${UNIQUE_SERVICES[*]}")]}"
         
+        echo "Changes detected in services: ${UNIQUE_SERVICES[*]}"
         echo "services=$SERVICES_JSON" >> $GITHUB_ENV
         echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
 
   terraform_plan:
     needs: detect_changes
+    if: fromJson(needs.detect_changes.outputs.services).services[0] != null
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -79,7 +97,7 @@ jobs:
     - name: Install Terraform
       uses: hashicorp/setup-terraform@v2
       with:
-        terraform_version: 1.11.0
+        terraform_version: 1.11.0-rc1
 
     - name: Set Up OCI Environment Variables
       run: |
@@ -122,6 +140,7 @@ jobs:
 
   terraform_apply:
     needs: [terraform_plan, detect_changes]
+    if: fromJson(needs.detect_changes.outputs.services).services[0] != null
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -143,7 +162,7 @@ jobs:
     - name: Install Terraform
       uses: hashicorp/setup-terraform@v2
       with:
-        terraform_version: 1.11.0
+        terraform_version: 1.11.0-rc1
 
     - name: Set Up OCI Environment Variables
       run: |
