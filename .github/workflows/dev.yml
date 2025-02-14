@@ -26,21 +26,10 @@ jobs:
             - 'toronto/network/**'
           storage:
             - 'toronto/storage/**'
+
     - name: Determine Changed Services
       id: set-services
       run: |
-        # Find all changed folders
-        CHANGES=$(find . -type f -name "*.tf" -exec dirname {} \; | sort -u)
-        
-        # Check if there are any changes
-        if [ -z "$CHANGES" ]; then
-          echo "No Terraform changes detected in any directory"
-          echo "services={\"services\": []}" >> $GITHUB_ENV
-          echo "services={\"services\": []}" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-        
-        # Initialize arrays
         SERVICES=()
         if [[ "${{ steps.filter.outputs.identity }}" == "true" ]]; then
           SERVICES+=('"identity"')
@@ -51,19 +40,22 @@ jobs:
         if [[ "${{ steps.filter.outputs.storage }}" == "true" ]]; then
           SERVICES+=('"storage"')
         fi
+
         SERVICES_JSON="{\"services\": [$(IFS=,; echo "${SERVICES[*]}")]}"
+
         echo "services=$SERVICES_JSON" >> $GITHUB_ENV
         echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
+
   deploy:
     needs: detect_changes
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: ${{fromJson(needs.detect_changes.outputs.services)}}
+        service: ${{ fromJson(needs.detect_changes.outputs.services).services }}
     permissions:
       id-token: write
       contents: read
-    
+
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -88,10 +80,12 @@ jobs:
         echo "${{ secrets.OCI_PRIVATE_KEY }}" > oci_api_key.pem
         chmod 600 oci_api_key.pem
         echo "OCI_PRIVATE_KEY_PATH=$PWD/oci_api_key.pem" >> $GITHUB_ENV
+
     - name: Terraform Init
       run: |
         cd toronto/${{ matrix.service }}
-        terraform init
+        terraform init 
+
     - name: Terraform Plan
       run: |
         cd toronto/${{ matrix.service }}
@@ -99,8 +93,9 @@ jobs:
                                                -var="user_ocid=${{ secrets.OCI_USER }}" \
                                                -var="region=${{ secrets.OCI_REGION }}" \
                                                -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
-                                               -var="private_key_path=$OCI_PRIVATE_KEY_PATH"
+                                               -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
                                              
+
     - name: Upload Terraform Plan
       uses: actions/upload-artifact@v4
       with:
