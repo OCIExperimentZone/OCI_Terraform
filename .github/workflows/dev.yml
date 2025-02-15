@@ -94,14 +94,8 @@ jobs:
                                                -var="region=${{ secrets.OCI_REGION }}" \
                                                -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
                                                -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
-                                             
-
-        - name: Upload Terraform Plan
-          uses: actions/upload-artifact@v4
-          with:
-            name: terraform-plan-${{ matrix.service }}
-            path: toronto/${{ matrix.service }}/terraform.tfplan
-    
+                                            
+       
   apply:
       needs: [deploy, detect_changes]
       runs-on: ubuntu-latest
@@ -145,7 +139,7 @@ jobs:
       - name: Terraform Plan
         run: |
           cd toronto/${{ matrix.service }}
-          terraform apply   -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+          terraform apply                        -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
                                                  -var="user_ocid=${{ secrets.OCI_USER }}" \
                                                  -var="region=${{ secrets.OCI_REGION }}" \
                                                  -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
