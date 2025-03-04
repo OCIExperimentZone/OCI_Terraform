@@ -10,7 +10,9 @@ jobs:
   detect_changes:
     runs-on: ubuntu-latest
     outputs:
-      services: ${{ steps.set-services.outputs.services }}
+      identity: ${{ steps.filter.outputs.identity }}
+      network: ${{ steps.filter.outputs.network }}
+      storage: ${{ steps.filter.outputs.storage }}
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -27,31 +29,10 @@ jobs:
           storage:
             - 'toronto/storage/**'
 
-    - name: Determine Changed Services
-      id: set-services
-      run: |
-        SERVICES=()
-        if [[ "${{ steps.filter.outputs.identity }}" == "true" ]]; then
-          SERVICES+=('"identity"')
-        fi
-        if [[ "${{ steps.filter.outputs.network }}" == "true" ]]; then
-          SERVICES+=('"network"')
-        fi
-        if [[ "${{ steps.filter.outputs.storage }}" == "true" ]]; then
-          SERVICES+=('"storage"')
-        fi
-
-        SERVICES_JSON="{\"services\": [$(IFS=,; echo "${SERVICES[*]}")]}"
-
-        echo "services=$SERVICES_JSON" >> $GITHUB_ENV
-        echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
-
-  deploy:
+  deploy_identity:
     needs: detect_changes
+    if: ${{ needs.detect_changes.outputs.identity == 'true' }}
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        service: ${{ fromJson(needs.detect_changes.outputs.services).services }}
     permissions:
       id-token: write
       contents: read
@@ -83,64 +64,135 @@ jobs:
 
     - name: Terraform Init
       run: |
-        cd toronto/${{ matrix.service }}
+        cd toronto/identity
         terraform init 
 
     - name: Terraform Plan
       run: |
-        cd toronto/${{ matrix.service }}
-        terraform plan -out=terraform.tfplan -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+        cd toronto/identity
+        terraform plan                         -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
                                                -var="user_ocid=${{ secrets.OCI_USER }}" \
                                                -var="region=${{ secrets.OCI_REGION }}" \
                                                -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
                                                -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
-                                            
-       
-  apply:
-      needs: [deploy, detect_changes]
-      runs-on: ubuntu-latest
-      strategy:
-        matrix:
-          service: ${{ fromJson(needs.detect_changes.outputs.services).services }}
-      permissions:
-        id-token: write
-        contents: read
-    
-      steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-    
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-    
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.6
-    
-      - name: Set Up OCI Environment Variables
-        run: |
-          echo "OCI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
-          echo "OCI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
-          echo "OCI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
-          echo "OCI_FINGERPRINT=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
-          echo "${{ secrets.OCI_PRIVATE_KEY }}" > oci_api_key.pem
-          chmod 600 oci_api_key.pem
-          echo "OCI_PRIVATE_KEY_PATH=$PWD/oci_api_key.pem" >> $GITHUB_ENV
-    
-      - name: Terraform Init
-        run: |
-          cd toronto/${{ matrix.service }}
-          terraform init 
-    
-      - name: Terraform Plan
-        run: |
-          cd toronto/${{ matrix.service }}
-          terraform apply                        -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
-                                                 -var="user_ocid=${{ secrets.OCI_USER }}" \
-                                                 -var="region=${{ secrets.OCI_REGION }}" \
-                                                 -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
-                                                 -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
+
+    - name: Terraform Apply
+      run: |
+        cd toronto/identity
+        terraform apply                        -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+                                               -var="user_ocid=${{ secrets.OCI_USER }}" \
+                                               -var="region=${{ secrets.OCI_REGION }}" \
+                                               -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
+                                               -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
+
+  deploy_network:
+    needs: [detect_changes, deploy_identity]
+    if: ${{ needs.detect_changes.outputs.network == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.5.6
+
+    - name: Set Up OCI Environment Variables
+      run: |
+        echo "OCI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+        echo "OCI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+        echo "OCI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
+        echo "OCI_FINGERPRINT=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
+        echo "${{ secrets.OCI_PRIVATE_KEY }}" > oci_api_key.pem
+        chmod 600 oci_api_key.pem
+        echo "OCI_PRIVATE_KEY_PATH=$PWD/oci_api_key.pem" >> $GITHUB_ENV
+
+    - name: Terraform Init
+      run: |
+        cd toronto/network
+        terraform init 
+
+    - name: Terraform Plan
+      run: |
+        cd toronto/network
+        terraform plan                         -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+                                               -var="user_ocid=${{ secrets.OCI_USER }}" \
+                                               -var="region=${{ secrets.OCI_REGION }}" \
+                                               -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
+                                               -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
+
+    - name: Terraform Apply
+      run: |
+        cd toronto/network
+        terraform apply                        -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+                                               -var="user_ocid=${{ secrets.OCI_USER }}" \
+                                               -var="region=${{ secrets.OCI_REGION }}" \
+                                               -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
+                                               -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
+
+  deploy_storage:
+    needs: [detect_changes, deploy_network]
+    if: ${{ needs.detect_changes.outputs.storage == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Install Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.5.6
+
+    - name: Set Up OCI Environment Variables
+      run: |
+        echo "OCI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+        echo "OCI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+        echo "OCI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
+        echo "OCI_FINGERPRINT=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
+        echo "${{ secrets.OCI_PRIVATE_KEY }}" > oci_api_key.pem
+        chmod 600 oci_api_key.pem
+        echo "OCI_PRIVATE_KEY_PATH=$PWD/oci_api_key.pem" >> $GITHUB_ENV
+
+    - name: Terraform Init
+      run: |
+        cd toronto/storage
+        terraform init 
+
+    - name: Terraform Plan
+      run: |
+        cd toronto/storage
+        terraform plan                         -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+                                               -var="user_ocid=${{ secrets.OCI_USER }}" \
+                                               -var="region=${{ secrets.OCI_REGION }}" \
+                                               -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
+                                               -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
+
+    - name: Terraform Apply
+      run: |
+        cd toronto/storage
+        terraform apply                        -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+                                               -var="user_ocid=${{ secrets.OCI_USER }}" \
+                                               -var="region=${{ secrets.OCI_REGION }}" \
+                                               -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
+                                               -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
