@@ -47,7 +47,7 @@ jobs:
           echo "matrix={\"service\":[]}" >> $GITHUB_OUTPUT
         else
           echo "has_changes=true" >> $GITHUB_OUTPUT
-          matrix=$(printf '%s\n' "${services[@]}" | jq -R . | jq -s '{"service": .}')
+          matrix=$(printf '%s\n' "${services[@]}" | jq -R . | jq -s '{service: .}')
           echo "matrix=$matrix" >> $GITHUB_OUTPUT
         fi
 
