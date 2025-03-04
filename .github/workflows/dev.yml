@@ -10,8 +10,9 @@ jobs:
   detect_changes:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-      has_changes: ${{ steps.set-matrix.outputs.has_changes }}
+       identity: ${{ steps.filter.outputs.identity }}
+       network: ${{ steps.filter.outputs.network }}
+       storage: ${{ steps.filter.outputs.storage }}
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -32,13 +33,13 @@ jobs:
       id: set-matrix
       run: |
         services=()
-        if [[ "${{ steps.filter.outputs.identity }}" == "true" ]]; then
+        if [[ "${{ needs.changes.identity }}" == "true" ]]; then
           services+=("identity")
         fi
-        if [[ "${{ steps.filter.outputs.network }}" == "true" ]]; then
+        if [[ "${{ needs.changes.network }}" == "true" ]]; then
           services+=("network")
         fi
-        if [[ "${{ steps.filter.outputs.storage }}" == "true" ]]; then
+        if [[ "${{ needs.changes.storage }}" == "true" ]]; then
           services+=("storage")
         fi
         
@@ -53,31 +54,15 @@ jobs:
 
   deploy:
     needs: detect_changes
-    if: ${{ needs.detect_changes.outputs.has_changes == 'true' }}
     runs-on: ubuntu-latest
     strategy:
-      matrix: ${{ fromJson(needs.detect_changes.outputs.matrix) }}
-      max-parallel: 1  # Ensure sequential deployment
+      matrix:
+        service: ${{ fromJson(needs.detect_changes.outputs.services).services }}
     permissions:
       id-token: write
       contents: read
 
     steps:
-    - name: Check Dependencies
-      run: |
-        if [[ "${{ matrix.service }}" == "network" ]]; then
-          if [[ "${{ contains(fromJson(needs.detect_changes.outputs.matrix).service, 'identity') }}" == "true" ]]; then
-            echo "Waiting for identity deployment to complete"
-            exit 1
-          fi
-        fi
-        if [[ "${{ matrix.service }}" == "storage" ]]; then
-          if [[ "${{ contains(fromJson(needs.detect_changes.outputs.matrix).service, 'network') }}" == "true" || "${{ contains(fromJson(needs.detect_changes.outputs.matrix).service, 'identity') }}" == "true" ]]; then
-            echo "Waiting for network/identity deployment to complete"
-            exit 1
-          fi
-        fi
-
     - name: Checkout Repository
       uses: actions/checkout@v4
 
@@ -110,18 +95,27 @@ jobs:
     - name: Terraform Plan
       run: |
         cd toronto/${{ matrix.service }}
-        terraform plan -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
-                      -var="user_ocid=${{ secrets.OCI_USER }}" \
-                      -var="region=${{ secrets.OCI_REGION }}" \
-                      -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
-                      -var="private_key_path=$OCI_PRIVATE_KEY_PATH"
+        terraform plan -out=terraform.tfplan -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+                                               -var="user_ocid=${{ secrets.OCI_USER }}" \
+                                               -var="region=${{ secrets.OCI_REGION }}" \
+                                               -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
+                                               -var="private_key_path=$OCI_PRIVATE_KEY_PATH" \
+                                            
+       
 
-    - name: Terraform Apply
-      run: |
-        cd toronto/${{ matrix.service }}
-        terraform apply -auto-approve \
-                      -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
-                      -var="user_ocid=${{ secrets.OCI_USER }}" \
-                      -var="region=${{ secrets.OCI_REGION }}" \
-                      -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
-                      -var="private_key_path=$OCI_PRIVATE_KEY_PATH"
+
+
+
+
+
+  apply:
+      needs: [deploy, detect_changes]
+      runs-on: ubuntu-latest
+@@ -145,7 +139,7 @@
+      - name: Terraform Plan
+        run: |
+          cd toronto/${{ matrix.service }}
+          terraform apply                        -var="tenancy_ocid=${{ secrets.OCI_TENANCY }}" \
+                                                 -var="user_ocid=${{ secrets.OCI_USER }}" \
+                                                 -var="region=${{ secrets.OCI_REGION }}" \
+                                                 -var="fingerprint=${{ secrets.OCI_FINGERPRINT }}" \
