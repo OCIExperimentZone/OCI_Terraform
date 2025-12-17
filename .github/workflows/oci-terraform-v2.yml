@@ -16,16 +16,24 @@ name: 🎯 OCI Terraform Controller v2.0
 run-name: "[v2] ${{ github.event_name }} → ${{ github.ref_name }} by @${{ github.actor }}"
 
 on:
-  # Feature branch pushes → Auto-create PR AND main branch merges → Apply
+  # Feature branch pushes → Auto-create PR (only when toronto/ tfvars change)
   push:
     branches:
       - 'feature/**'
       - 'fix/**'
       - 'update/**'
       - 'hotfix/**'
+    paths:
+      - 'toronto/**/*.tfvars'
+  
+  # Main branch merges → Apply
+  push:
+    branches:
       - Dev
       - Staging
       - Production
+    paths:
+      - 'toronto/**/*.tfvars'
   
   # PR events → Run plan
   pull_request:
@@ -156,6 +164,36 @@ jobs:
               echo "❌ Failed to create Pull Request"
               exit 1
             fi
+          fi
+      
+      - name: 💬 Post Initial PR Comment
+        if: steps.detect.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get PR number
+          PR_NUM=$(gh pr list --head ${{ github.ref_name }} --base Dev --state open --json number --jq '.[0].number')
+          
+          if [ -n "$PR_NUM" ]; then
+            echo "📝 Posting comment to PR #$PR_NUM..."
+            
+            gh pr comment $PR_NUM --body "## 🚀 Auto-Created Terraform PR (v2.0)
+
+### 📦 Changes Detected
+**Services:** \`${{ steps.detect.outputs.services }}\`
+
+### 🔄 Next Steps
+1. **Terraform Plan** will run automatically
+2. **Review** the plan results (posted below)
+3. **Approve** if changes look correct
+4. **Merge** to trigger terraform apply with dependency ordering
+
+---
+⏳ *Waiting for terraform plan to complete...*"
+            
+            echo "✅ Initial comment posted!"
+          else
+            echo "⚠️  Could not find PR number"
           fi
 
   # ===========================================================================
