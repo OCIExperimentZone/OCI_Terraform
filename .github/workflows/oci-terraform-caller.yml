@@ -7,13 +7,13 @@
 
 name: 🎯 OCI Terraform
 
-run-name: "🚀 OCI Terraform: ${{ github.ref_name }} → ${{ github.base_ref || 'Dev' }} [@${{ github.actor }}]"
+run-name: "🚀 OCI Terraform: ${{ github.ref_name }} → ${{ github.base_ref || vars.BASE_BRANCH || 'Dev' }} [@${{ github.actor }}]"
 
 on:
-  # Any branch pushes with tfvars changes
+  # Any branch pushes with tfvars changes (any directory)
   push:
     paths:
-      - 'toronto/**/*.tfvars'
+      - '**/*.tfvars'
   
   # PR events
   pull_request:
@@ -22,11 +22,19 @@ on:
   # Manual trigger
   workflow_dispatch:
     inputs:
+      working_dir:
+        description: 'Working directory (e.g., toronto, staging)'
+        required: false
+        type: string
       parallel:
         description: 'Enable parallel execution'
         required: false
         type: boolean
         default: true
+      base_branch:
+        description: 'Base branch for PR'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -40,12 +48,12 @@ jobs:
     name: 📞 Call Reusable Workflow
     uses: OCIExperimentZone/OCI_Terraform/.github/workflows/oci-terraform-reusable.yml@main
     with:
-      working_dir: 'toronto'
-      terraform_version: '1.5.6'
-      python_version: '3.11'
+      working_dir: ${{ inputs.working_dir || vars.WORKING_DIR || 'toronto' }}
+      terraform_version: ${{ vars.TERRAFORM_VERSION || '1.5.6' }}
+      python_version: ${{ vars.PYTHON_VERSION || '3.11' }}
       parallel: ${{ inputs.parallel || true }}
-      max_workers: 3
-      base_branch: 'Dev'
+      max_workers: ${{ vars.MAX_WORKERS || 3 }}
+      base_branch: ${{ inputs.base_branch || vars.BASE_BRANCH || 'Dev' }}
     secrets:
       GT_APP_ID: ${{ secrets.GT_APP_ID }}
       GT_APP_PRIVATE_KEY: ${{ secrets.GT_APP_PRIVATE_KEY }}
