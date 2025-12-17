@@ -72,6 +72,8 @@ env:
   TERRAFORM_VERSION: '1.5.6'
   PYTHON_VERSION: '3.11'
   ORCHESTRATOR_VERSION: '2.0'
+  WORKING_DIR: 'toronto'  # Your service directory
+  MODULES_DIR: 'modules'   # Your shared modules directory
 
 jobs:
   # ===========================================================================
@@ -96,19 +98,26 @@ jobs:
       - name: 🔍 Detect Changes
         id: detect
         run: |
-          # Check for toronto/ or modules/ changes
-          if git diff --name-only HEAD^ | grep -qE "^(toronto|modules)/"; then
+          echo "🔍 Checking for infrastructure changes..."
+          echo "Working directory: ${{ env.WORKING_DIR }}"
+          echo "Modules directory: ${{ env.MODULES_DIR }}"
+          
+          # Check for service changes OR module changes (any file: .tf, .tfvars, .json, etc.)
+          if git diff --name-only HEAD^ | grep -qE "^(${{ env.WORKING_DIR }}|${{ env.MODULES_DIR }})/"; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
             
-            # Extract changed services
-            SERVICES=$(git diff --name-only HEAD^ | grep "^toronto/" | cut -d'/' -f2 | sort -u | tr '\n' ',' | sed 's/,$//' || echo "none")
+            # Extract changed services from working directory
+            SERVICES=$(git diff --name-only HEAD^ | grep "^${{ env.WORKING_DIR }}/" | cut -d'/' -f2 | sort -u | tr '\n' ',' | sed 's/,$//' || echo "none")
             echo "services=$SERVICES" >> $GITHUB_OUTPUT
+            echo "✅ Changed services: $SERVICES"
             
-            # Check for module changes
-            MODULES=$(git diff --name-only HEAD^ | grep "^modules/" | cut -d'/' -f2 | sort -u | tr '\n' ',' | sed 's/,$//' || echo "none")
+            # Check for shared module changes (affects multiple services)
+            MODULES=$(git diff --name-only HEAD^ | grep "^${{ env.MODULES_DIR }}/" | cut -d'/' -f2 | sort -u | tr '\n' ',' | sed 's/,$//' || echo "none")
             echo "modules=$MODULES" >> $GITHUB_OUTPUT
+            echo "✅ Changed modules: $MODULES"
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "⏭️  No infrastructure changes detected"
           fi
       
       - name: 🔀 Create Pull Request
@@ -238,7 +247,7 @@ jobs:
           
           python3 scripts/oci-terraform-orchestrator-v2.py \
             --action plan \
-            --working-dir "${{ github.workspace }}/toronto" \
+            --working-dir "${{ github.workspace }}/${{ env.WORKING_DIR }}" \
             --base-ref "$BASE_REF" \
             --region "${{ secrets.OCI_REGION }}" \
             --parallel \
@@ -403,7 +412,7 @@ jobs:
           
           python3 scripts/oci-terraform-orchestrator-v2.py \
             --action apply \
-            --working-dir "${{ github.workspace }}/toronto" \
+            --working-dir "${{ github.workspace }}/${{ env.WORKING_DIR }}" \
             --base-ref "HEAD^" \
             --region "${{ secrets.OCI_REGION }}" \
             $PARALLEL_FLAG \
