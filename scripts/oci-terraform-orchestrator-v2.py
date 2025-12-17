@@ -596,8 +596,9 @@ def generate_results_summary(results: List[Dict], action: str, execution_levels:
         else:
             summary += f"**Error:** {result['error']}\n\n"
             if result['output']:
+                escaped_output = result['output'].replace('`', '\\`')
                 summary += f"<details><summary>🔍 Show Output</summary>\n\n"
-                summary += f"```\n{result['output'].replace('`', '\\`')}\n```\n"
+                summary += f"```\n{escaped_output}\n```\n"
                 summary += "</details>\n\n"
     
     # Footer

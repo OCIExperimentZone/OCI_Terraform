@@ -1,29 +1,39 @@
 # =============================================================================
-# OCI TERRAFORM CONTROLLER - VERSION 2.0
+# OCI CENTRALIZED TERRAFORM CONTROLLER - WITH PR APPROVAL FLOW
 # =============================================================================
-# Enhanced features:
-# - ✅ Service dependency ordering (automatic topological sort)
-# - ✅ Module change detection (re-plan affected services)
-# - ✅ Parallel execution within dependency levels
-# - ✅ Manual approval gates with plan review
-# - ✅ Drift detection (scheduled runs)
-# - ✅ Enhanced notifications
-# - ✅ State locking
+# Enhanced workflow with:
+# - Auto-PR creation from feature branches
+# - Terraform plan on PR (with approval wait)
+# - Terraform apply only after PR merge
+# - Manual approval gates for production
 # =============================================================================
 
-name: 🎯 OCI Terraform Controller v2.0
+name: 🎯 OCI Terraform Controller (PR-Based)
 
-run-name: "[v2] ${{ github.event_name }} → ${{ github.ref_name }} by @${{ github.actor }}"
+run-name: "[${{ github.event_name }}] ${{ github.ref_name }} by @${{ github.actor }}"
 
 on:
-  # Any branch pushes (job conditions control what runs)
+  # Feature branch pushes → Auto-create PR
   push:
-    paths:
-      - '**/**/*.tfvars'
+    branches:
+      - 'feature/**'
+      - 'fix/**'
+      - 'update/**'
   
-  # PR events → Run plan
+  # PR events → Run plan and wait for approval
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - Dev
+      - Staging
+      - Production
+  
+  # Merge to main branches → Run apply
+  push:
+    branches:
+      - Dev
+      - Staging
+      - Production
   
   # Manual trigger
   workflow_dispatch:
@@ -45,24 +55,16 @@ on:
           - Staging
           - Production
         default: 'Dev'
-      parallel:
-        description: 'Enable parallel execution'
-        required: false
-        type: boolean
-        default: true
 
 permissions:
   contents: write
   pull-requests: write
   issues: write
   id-token: write
-  actions: write
 
 env:
   TERRAFORM_VERSION: '1.5.6'
   PYTHON_VERSION: '3.11'
-  ORCHESTRATOR_VERSION: '2.0'
-  WORKING_DIR: 'toronto'  # Your service directory with tfvars files
 
 jobs:
   # ===========================================================================
@@ -75,147 +77,87 @@ jobs:
       github.event_name == 'push' && 
       (startsWith(github.ref, 'refs/heads/feature/') || 
        startsWith(github.ref, 'refs/heads/fix/') || 
-       startsWith(github.ref, 'refs/heads/update/') ||
-       startsWith(github.ref, 'refs/heads/hotfix/'))
+       startsWith(github.ref, 'refs/heads/update/'))
     
     steps:
-      - name: � Generate GitHub App Token
-        id: auth
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.GT_APP_ID }}
-          private-key: ${{ secrets.GT_APP_PRIVATE_KEY }}
-      
       - name: 📥 Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       
-      - name: 🔍 Detect Changes
+      - name: 🔍 Detect Changed Services
         id: detect
         run: |
-          echo "🔍 Detecting TFVARS file changes only..."
-          
-          # Get base ref for comparison
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE_REF="origin/${{ github.base_ref }}"
-          else
-            BASE_REF="HEAD^"
-          fi
-          
-          echo "📊 Comparing against: $BASE_REF"
-          
-          # Detect ONLY .tfvars files in working directory
-          if git diff --name-only $BASE_REF | grep -qE "^${{ env.WORKING_DIR }}/.*\.tfvars$"; then
+          # Quick check for toronto/ changes
+          if git diff --name-only HEAD^ | grep -q "^toronto/"; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
             
-            # Extract changed services (directories containing changed tfvars)
-            SERVICES=$(git diff --name-only $BASE_REF | grep "^${{ env.WORKING_DIR }}/.*\.tfvars$" | cut -d'/' -f2 | sort -u | tr '\n' ',' | sed 's/,$//')
+            # Extract changed services
+            SERVICES=$(git diff --name-only HEAD^ | grep "^toronto/" | cut -d'/' -f2 | sort -u | tr '\n' ',' | sed 's/,$//')
             echo "services=$SERVICES" >> $GITHUB_OUTPUT
-            echo "✅ Changed services: $SERVICES"
-            
-            # Show which tfvars files changed
-            echo "📝 Changed tfvars files:"
-            git diff --name-only $BASE_REF | grep "^${{ env.WORKING_DIR }}/.*\.tfvars$"
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "⏭️  No tfvars changes detected"
           fi
       
       - name: 🔀 Create Pull Request
         if: steps.detect.outputs.has_changes == 'true'
-        env:
-          GH_TOKEN: ${{ steps.auth.outputs.token }}
-        run: |
-          echo "======================================================"
-          echo "📝 Creating Pull Request"
-          echo "   Base: Dev"
-          echo "   Head: ${{ github.ref_name }}"
-          echo "   Services: ${{ steps.detect.outputs.services }}"
-          echo "======================================================"
-          
-          # Check if PR already exists
-          if gh pr list --head ${{ github.ref_name }} --base Dev --state open | grep -q "${{ github.ref_name }}"; then
-            echo "✅ Pull Request already exists:"
-            gh pr list --head ${{ github.ref_name }} --base Dev --state open
-          else
-            echo "🔄 Creating new Pull Request..."
-            gh pr create \
-              --base Dev \
-              --head ${{ github.ref_name }} \
-              --title "🚀 [Auto] Terraform Update - ${{ steps.detect.outputs.services }}" \
-              --body "Automated Terraform TFVARS Update - Services: ${{ steps.detect.outputs.services }}"
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref_name }}
+          base: Dev
+          title: "🚀 [Auto] OCI Terraform Update - ${{ steps.detect.outputs.services }}"
+          body: |
+            ## 🎯 Automated Terraform Infrastructure Update
             
-            if [ $? -eq 0 ]; then
-              echo "✅ Pull Request created successfully!"
-              gh pr list --head ${{ github.ref_name }} --base Dev --state open
-            else
-              echo "❌ Failed to create Pull Request"
-              exit 1
-            fi
-          fi
-      
-      - name: 💬 Post Initial PR Comment
-        if: steps.detect.outputs.has_changes == 'true'
-        env:
-          GH_TOKEN: ${{ steps.auth.outputs.token }}
-        run: |
-          PR_NUM=$(gh pr list --head ${{ github.ref_name }} --base Dev --state open --json number --jq '.[0].number')
-          
-          if [ -n "$PR_NUM" ]; then
-            echo "Posting comment to PR #$PR_NUM..."
+            **Branch:** `${{ github.ref_name }}`  
+            **Changed Services:** `${{ steps.detect.outputs.services }}`  
+            **Triggered by:** @${{ github.actor }}
             
-            SERVICES="${{ steps.detect.outputs.services }}"
-            echo "## Auto-Created Terraform PR (v2.0)" > /tmp/pr-comment.txt
-            echo "" >> /tmp/pr-comment.txt
-            echo "### Changes Detected" >> /tmp/pr-comment.txt
-            echo "Services: ${SERVICES}" >> /tmp/pr-comment.txt
-            echo "" >> /tmp/pr-comment.txt
-            echo "### Next Steps" >> /tmp/pr-comment.txt
-            echo "1. Terraform Plan will run automatically" >> /tmp/pr-comment.txt
-            echo "2. Review the plan results (posted below)" >> /tmp/pr-comment.txt
-            echo "3. Approve if changes look correct" >> /tmp/pr-comment.txt
-            echo "4. Merge to trigger terraform apply with dependency ordering" >> /tmp/pr-comment.txt
-            echo "" >> /tmp/pr-comment.txt
-            echo "---" >> /tmp/pr-comment.txt
-            echo "Waiting for terraform plan to complete..." >> /tmp/pr-comment.txt
+            ### 📋 What This PR Does
+            This PR contains OCI infrastructure changes detected in the following services:
+            - Services: `${{ steps.detect.outputs.services }}`
             
-            gh pr comment $PR_NUM --body-file /tmp/pr-comment.txt
-            echo "Initial comment posted!"
-          else
-            echo "Could not find PR number"
-          fi
+            ### ✅ Next Steps
+            1. **Review** the terraform plan output below (posted automatically)
+            2. **Approve** this PR if changes look correct
+            3. **Merge** to trigger terraform apply
+            
+            ### 🤖 Automation Status
+            - [ ] Terraform plan completed
+            - [ ] Plan reviewed
+            - [ ] PR approved
+            - [ ] Ready to merge
+            
+            ---
+            *This PR was created automatically by OCI Terraform Controller*
+          labels: |
+            terraform
+            auto-created
+            oci-infrastructure
+          draft: false
 
   # ===========================================================================
-  # JOB 2: TERRAFORM PLAN (ON PR) - WITH DEPENDENCY ORDERING
+  # JOB 2: TERRAFORM PLAN (ON PR)
   # ===========================================================================
   terraform-plan:
-    name: 📋 Terraform Plan (v2)
+    name: 📋 Terraform Plan
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.action == 'plan')
-    
-    outputs:
-      has_changes: ${{ steps.plan.outputs.has_changes }}
-      plan_summary: ${{ steps.plan.outputs.summary }}
+    if: github.event_name == 'pull_request'
     
     steps:
       - name: 📋 PR Details
         run: |
           echo "════════════════════════════════════════════════════════════════"
-          echo "🔍 TERRAFORM PLAN v2.0 - WITH DEPENDENCY ORDERING"
+          echo "🔍 TERRAFORM PLAN - PR VALIDATION"
           echo "════════════════════════════════════════════════════════════════"
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
-            echo "From: ${{ github.head_ref }} → ${{ github.base_ref }}"
-          else
-            echo "Manual trigger: ${{ inputs.environment }}"
-          fi
+          echo "PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
+          echo "From: ${{ github.head_ref }} → ${{ github.base_ref }}"
+          echo "Author: ${{ github.event.pull_request.user.login }}"
           echo "════════════════════════════════════════════════════════════════"
       
-      - name: 📥 Checkout
+      - name: 📥 Checkout PR Branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
       
       - name: 🔐 Configure OCI CLI
@@ -237,12 +179,16 @@ jobs:
           echo "TF_VAR_region=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
           echo "TF_VAR_fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
           echo "TF_VAR_private_key_path=$HOME/.oci/oci_api_key.pem" >> $GITHUB_ENV
+          echo "OCI_CLI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+          echo "OCI_CLI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+          echo "OCI_CLI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
       
       - name: 🔐 Configure AWS Credentials (State Backend)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: oci-terraform-plan
       
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
@@ -257,29 +203,18 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
       
-      - name: 📋 Run Terraform Plan (v2 with dependencies)
+      - name: 📋 Run Terraform Plan
         id: plan
         run: |
-          BASE_REF="${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD^' }}"
-          
-          python3 scripts/oci-terraform-orchestrator-v2.py \
+          python scripts/oci-terraform-orchestrator.py \
             --action plan \
-            --working-dir "${{ github.workspace }}/${{ env.WORKING_DIR }}" \
-            --base-ref "$BASE_REF" \
+            --working-dir "${{ github.workspace }}/toronto" \
+            --base-ref "origin/${{ github.base_ref }}" \
             --region "${{ secrets.OCI_REGION }}" \
-            --parallel \
-            --max-workers 3 \
             --debug
-          
-          # Check if there are changes
-          if grep -q "No Infrastructure Changes" terraform-results.md; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          else
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-          fi
       
-      - name: 💬 Post Plan Results to PR
-        if: github.event_name == 'pull_request'
+      - name: 💬 Post Plan Results
+        if: always()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -290,28 +225,22 @@ jobs:
             try {
               comment = fs.readFileSync('terraform-results.md', 'utf8');
             } catch (error) {
-              comment = `## ❌ Plan Failed\n\nFailed to generate plan. Check workflow logs.\n\nError: ${error.message}`;
+              comment = `## ❌ Plan Failed\n\nFailed to generate plan. Check logs for details.\n\nError: ${error.message}`;
             }
             
-            // Add v2 specific notes
-            comment += `\n\n## 🎯 Version 2.0 Features\n\n`;
-            comment += `This plan was generated with:\n`;
-            comment += `- ✅ Dependency-aware execution order\n`;
-            comment += `- ✅ Module change detection\n`;
-            comment += `- ✅ Parallel execution capability\n`;
-            comment += `- ✅ Enhanced error recovery\n\n`;
-            
-            comment += `## ✅ Pre-Merge Checklist\n\n`;
-            comment += `- [ ] Execution order respects dependencies\n`;
+            // Add approval checklist
+            comment += `\n\n## ✅ Approval Checklist\n\n`;
+            comment += `Before merging this PR, please verify:\n\n`;
+            comment += `- [ ] Terraform plan shows expected changes\n`;
             comment += `- [ ] No unexpected resource deletions\n`;
-            comment += `- [ ] Module changes reviewed (if any)\n`;
-            comment += `- [ ] Plan output matches expectations\n`;
-            comment += `\n**⚠️  Merging will trigger automatic apply**\n`;
+            comment += `- [ ] Service dependencies are correct\n`;
+            comment += `- [ ] Changes align with CD3 export or manual updates\n`;
+            comment += `\n**⚠️  Merging this PR will trigger \`terraform apply\`**\n`;
             
             const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             comment += `\n---\n🔗 [View Workflow Run](${runUrl})`;
             
-            // Update or create comment
+            // Find existing plan comment
             const { data: comments } = await github.rest.issues.listComments({
               issue_number: context.issue.number,
               owner: context.repo.owner,
@@ -323,6 +252,7 @@ jobs:
             );
             
             if (botComment) {
+              // Update existing comment
               await github.rest.issues.updateComment({
                 comment_id: botComment.id,
                 owner: context.repo.owner,
@@ -330,6 +260,7 @@ jobs:
                 body: comment
               });
             } else {
+              // Create new comment
               await github.rest.issues.createComment({
                 issue_number: context.issue.number,
                 owner: context.repo.owner,
@@ -342,40 +273,38 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan-v2-${{ github.event.pull_request.number || github.run_number }}
+          name: terraform-plan-${{ github.event.pull_request.number }}
           path: |
             terraform-results.md
             terraform-audit.json
           retention-days: 30
 
   # ===========================================================================
-  # JOB 3: TERRAFORM APPLY (ON MERGE) - WITH DEPENDENCY ORDERING
+  # JOB 3: TERRAFORM APPLY (ON MERGE) - WITH APPROVAL GATE
   # ===========================================================================
   terraform-apply:
-    name: 🚀 Terraform Apply (v2)
+    name: 🚀 Terraform Apply
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'push' && 
-       (github.ref == 'refs/heads/Dev' || 
-        github.ref == 'refs/heads/Staging' || 
-        github.ref == 'refs/heads/Production')) ||
-      (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
+      github.event_name == 'push' && 
+      (github.ref == 'refs/heads/Dev' || 
+       github.ref == 'refs/heads/Staging' || 
+       github.ref == 'refs/heads/Production')
     
-    # Environment-based approval gates
+    # Production requires manual approval
     environment:
-      name: ${{ (github.ref == 'refs/heads/Production' || inputs.environment == 'Production') && 'production' || (github.ref == 'refs/heads/Staging' || inputs.environment == 'Staging') && 'staging' || 'development' }}
+      name: ${{ github.ref == 'refs/heads/Production' && 'production' || github.ref == 'refs/heads/Staging' && 'staging' || 'development' }}
     
     steps:
       - name: 🚀 Apply Details
         run: |
           echo "════════════════════════════════════════════════════════════════"
-          echo "🚀 TERRAFORM APPLY v2.0 - WITH DEPENDENCY ORDERING"
+          echo "🚀 TERRAFORM APPLY - DEPLOYMENT"
           echo "════════════════════════════════════════════════════════════════"
           echo "Branch: ${{ github.ref_name }}"
           echo "Commit: ${{ github.sha }}"
-          echo "Actor: ${{ github.actor }}"
+          echo "Triggered by: ${{ github.actor }}"
           echo "Environment: ${{ github.ref == 'refs/heads/Production' && 'PRODUCTION' || github.ref == 'refs/heads/Staging' && 'STAGING' || 'DEVELOPMENT' }}"
-          echo "Parallel: ${{ inputs.parallel || 'true' }}"
           echo "════════════════════════════════════════════════════════════════"
       
       - name: 📥 Checkout
@@ -402,12 +331,16 @@ jobs:
           echo "TF_VAR_region=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
           echo "TF_VAR_fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
           echo "TF_VAR_private_key_path=$HOME/.oci/oci_api_key.pem" >> $GITHUB_ENV
+          echo "OCI_CLI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+          echo "OCI_CLI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+          echo "OCI_CLI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
       
-      - name: 🔐 Configure AWS Credentials
+      - name: 🔐 Configure AWS Credentials (State Backend)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: oci-terraform-apply
       
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
@@ -422,39 +355,34 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
       
-      - name: 🚀 Run Terraform Apply (v2 with dependencies)
+      - name: 🚀 Run Terraform Apply
         id: apply
         run: |
-          PARALLEL_FLAG="${{ inputs.parallel == 'true' || github.event_name == 'push' && '--parallel' || '' }}"
-          
-          python3 scripts/oci-terraform-orchestrator-v2.py \
+          python scripts/oci-terraform-orchestrator.py \
             --action apply \
-            --working-dir "${{ github.workspace }}/${{ env.WORKING_DIR }}" \
+            --working-dir "${{ github.workspace }}/toronto" \
             --base-ref "HEAD^" \
             --region "${{ secrets.OCI_REGION }}" \
-            $PARALLEL_FLAG \
-            --max-workers 3 \
             --debug
       
       - name: 📤 Upload Apply Results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-apply-v2-${{ github.run_number }}-${{ github.ref_name }}
+          name: terraform-apply-${{ github.run_number }}-${{ github.ref_name }}
           path: |
             terraform-results.md
             terraform-audit.json
-          retention-days: 90
+          retention-days: 90  # Keep apply results longer
       
       - name: 📊 Create Deployment Summary
         if: always()
         run: |
-          echo "## 🚀 Terraform Apply Summary (v2.0)" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Terraform Apply Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Actor:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Orchestrator:** v${{ env.ORCHESTRATOR_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [ -f terraform-results.md ]; then
@@ -466,10 +394,8 @@ jobs:
         run: |
           echo "════════════════════════════════════════════════════════════════"
           if [[ "${{ steps.apply.outcome }}" == "success" ]]; then
-            echo "✅ TERRAFORM APPLY SUCCESSFUL (v2.0)"
+            echo "✅ TERRAFORM APPLY SUCCESSFUL"
           else
-            echo "❌ TERRAFORM APPLY FAILED (v2.0)"
+            echo "❌ TERRAFORM APPLY FAILED"
           fi
           echo "════════════════════════════════════════════════════════════════"
-  
-
