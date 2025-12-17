@@ -1,0 +1,35 @@
+{
+  "timestamp": "2025-12-17T14:32:38.968903",
+  "orchestrator_version": "2.0",
+  "action": "plan",
+  "total_services": 1,
+  "successful_services": 1,
+  "failed_services": 0,
+  "execution_levels": [
+    [
+      "identity"
+    ]
+  ],
+  "total_resources_created": 0,
+  "total_resources_changed": 0,
+  "total_resources_destroyed": 0,
+  "total_duration": 0.0,
+  "services": [
+    {
+      "service": "identity",
+      "success": true,
+      "duration": 0.0,
+      "output": "[DRY-RUN] Simulated plan for identity",
+      "error": null,
+      "resources_created": 0,
+      "resources_changed": 0,
+      "resources_destroyed": 0
+    }
+  ],
+  "environment": {
+    "region": "unknown",
+    "github_ref": "unknown",
+    "github_sha": "unknown",
+    "github_actor": "unknown"
+  }
+}
