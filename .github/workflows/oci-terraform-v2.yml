@@ -16,24 +16,20 @@ name: 🎯 OCI Terraform Controller v2.0
 run-name: "[v2] ${{ github.event_name }} → ${{ github.ref_name }} by @${{ github.actor }}"
 
 on:
-  # Feature branch pushes → Auto-create PR
+  # Feature branch pushes → Auto-create PR AND main branch merges → Apply
   push:
     branches:
       - 'feature/**'
       - 'fix/**'
       - 'update/**'
       - 'hotfix/**'
-  
-  # PR events → Run plan
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    branches:
       - Dev
       - Staging
       - Production
   
-  # Merge to main branches → Run apply
-  push:
+  # PR events → Run plan
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - Dev
       - Staging
@@ -64,10 +60,6 @@ on:
         required: false
         type: boolean
         default: true
-  
-  # Scheduled drift detection (daily at 2 AM)
-  schedule:
-    - cron: '0 2 * * *'
 
 permissions:
   contents: write
