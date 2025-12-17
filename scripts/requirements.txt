@@ -1,0 +1,8 @@
+# OCI Terraform Orchestrator Dependencies
+# Install with: pip install -r requirements.txt
+
+# Git operations for change detection
+GitPython>=3.1.40
+
+# YAML parsing (optional - for future config files)
+PyYAML>=6.0.1

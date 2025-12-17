@@ -1,0 +1,33 @@
+2025-02-12 02:58:32,196 - 
+============================= Verifying VCNs Tab ==========================================
+
+2025-02-12 02:58:32,196 - 
+====================== Note: LPGs will not be verified ====================================
+
+2025-02-12 02:58:32,406 - Start Null or Wrong value Check in each row---------------
+2025-02-12 02:58:32,407 - End Null or Wrong value Check in each row---------------
+
+2025-02-12 02:58:32,407 - Start VCN CIDRs Check--------------------------------------
+2025-02-12 02:58:32,407 - End VCN CIDRs Check--------------------------------------
+
+2025-02-12 02:58:32,407 - ============================= Verifying SubnetsVLANs Tab ==========================================
+
+2025-02-12 02:58:32,407 - Start Null or Wrong value check in each row-----------------
+2025-02-12 02:58:33,062 - End Null or Wrong value Check in each row------------------
+
+2025-02-12 02:58:33,062 - Start Subnet CIDRs Check---------------------------------
+2025-02-12 02:58:33,062 - End Subnet CIDRs Check---------------------------------
+
+2025-02-12 02:58:33,062 - ============================= Verifying DHCP Tab ==========================================
+
+2025-02-12 02:58:33,275 - Start Null or Wrong value Check in each row----------------
+2025-02-12 02:58:33,275 - End Null or Wrong value Check in each row-----------------
+
+2025-02-12 02:58:33,275 - ============================= Verifying DRGs Tab ==========================================
+
+2025-02-12 02:58:33,485 - =======
+2025-02-12 02:58:33,485 - Summary:
+2025-02-12 02:58:33,485 - =======
+2025-02-12 02:58:33,485 - There are no syntax errors in CD3. Proceed with TF Generation.
+
+2025-02-12 02:58:33,485 - Verify LPG's Peering Check Status once in the log file. Otherwise You are good to proceed with TF !!!
