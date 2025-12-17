@@ -130,14 +130,33 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Create PR directly without rebase
-          gh pr create \
-            --base Dev \
-            --head ${{ github.ref_name }} \
-            --title "🚀 [Auto] Terraform Update - ${{ steps.detect.outputs.services }}" \
-            --body "Automated Terraform TFVARS Update - Services: ${{ steps.detect.outputs.services }}" \
-            --label "terraform" \
-            --label "auto-created" || echo "PR may already exist"
+          echo "======================================================"
+          echo "📝 Creating Pull Request"
+          echo "   Base: Dev"
+          echo "   Head: ${{ github.ref_name }}"
+          echo "   Services: ${{ steps.detect.outputs.services }}"
+          echo "======================================================"
+          
+          # Check if PR already exists
+          if gh pr list --head ${{ github.ref_name }} --base Dev --state open | grep -q "${{ github.ref_name }}"; then
+            echo "✅ Pull Request already exists:"
+            gh pr list --head ${{ github.ref_name }} --base Dev --state open
+          else
+            echo "🔄 Creating new Pull Request..."
+            gh pr create \
+              --base Dev \
+              --head ${{ github.ref_name }} \
+              --title "🚀 [Auto] Terraform Update - ${{ steps.detect.outputs.services }}" \
+              --body "Automated Terraform TFVARS Update - Services: ${{ steps.detect.outputs.services }}"
+            
+            if [ $? -eq 0 ]; then
+              echo "✅ Pull Request created successfully!"
+              gh pr list --head ${{ github.ref_name }} --base Dev --state open
+            else
+              echo "❌ Failed to create Pull Request"
+              exit 1
+            fi
+          fi
 
   # ===========================================================================
   # JOB 2: TERRAFORM PLAN (ON PR) - WITH DEPENDENCY ORDERING
