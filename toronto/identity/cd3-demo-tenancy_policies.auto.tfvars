@@ -19,6 +19,3 @@ policies = {
         policy_statements = [ "allow group demo-group to read all-resources in tenancy"  ]
             },
  }
-
- 
-
