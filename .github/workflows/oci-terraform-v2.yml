@@ -24,32 +24,6 @@ on:
   # PR events → Run plan
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  
-  # Manual trigger
-  workflow_dispatch:
-    inputs:
-      action:
-        description: 'Action to perform'
-        required: true
-        type: choice
-        options:
-          - plan
-          - apply
-        default: 'plan'
-      environment:
-        description: 'Target environment'
-        required: true
-        type: choice
-        options:
-          - Dev
-          - Staging
-          - Production
-        default: 'Dev'
-      parallel:
-        description: 'Enable parallel execution'
-        required: false
-        type: boolean
-        default: true
 
 permissions:
   contents: write
@@ -62,7 +36,7 @@ env:
   TERRAFORM_VERSION: '1.5.6'
   PYTHON_VERSION: '3.11'
   ORCHESTRATOR_VERSION: '2.0'
-  WORKING_DIR: 'toronto'  # Your service directory with tfvars files
+  WORKING_DIR: ${{ vars.WORKING_DIR }}
 
 jobs:
   # ===========================================================================
