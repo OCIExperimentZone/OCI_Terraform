@@ -48,19 +48,10 @@ jobs:
     name: 📞 Call Reusable Workflow
     uses: OCIExperimentZone/OCI_Terraform/.github/workflows/oci-terraform-reusable.yml@main
     with:
-      working_dir: ${{ inputs.working_dir || vars.WORKING_DIR || 'toronto' }}
-      terraform_version: ${{ vars.TERRAFORM_VERSION || '1.5.6' }}
-      python_version: ${{ vars.PYTHON_VERSION || '3.11' }}
+      working_dir: ${{ inputs.working_dir || vars.WORKING_DIR }}
+      terraform_version: ${{ vars.TERRAFORM_VERSION }}
+      python_version: ${{ vars.PYTHON_VERSION }}
       parallel: ${{ inputs.parallel || true }}
-      max_workers: ${{ vars.MAX_WORKERS || 3 }}
-      base_branch: ${{ inputs.base_branch || vars.BASE_BRANCH || 'Dev' }}
-    secrets:
-      GT_APP_ID: ${{ secrets.GT_APP_ID }}
-      GT_APP_PRIVATE_KEY: ${{ secrets.GT_APP_PRIVATE_KEY }}
-      OCI_USER: ${{ secrets.OCI_USER }}
-      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
-      OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
-      OCI_REGION: ${{ secrets.OCI_REGION }}
-      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
-      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-      AWS_REGION: ${{ secrets.AWS_REGION }}
+      max_workers: ${{ vars.MAX_WORKERS }}
+      base_branch: ${{ github.base_ref || inputs.base_branch || vars.BASE_BRANCH }}
+    secrets: inherit
