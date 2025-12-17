@@ -16,32 +16,14 @@ name: 🎯 OCI Terraform Controller v2.0
 run-name: "[v2] ${{ github.event_name }} → ${{ github.ref_name }} by @${{ github.actor }}"
 
 on:
-  # Feature branch pushes → Auto-create PR (only when toronto/ tfvars change)
+  # Any branch pushes (job conditions control what runs)
   push:
-    branches:
-      - 'feature/**'
-      - 'fix/**'
-      - 'update/**'
-      - 'hotfix/**'
     paths:
-      - 'toronto/**/*.tfvars'
-  
-  # Main branch merges → Apply
-  push:
-    branches:
-      - Dev
-      - Staging
-      - Production
-    paths:
-      - 'toronto/**/*.tfvars'
+      - '**/**/*.tfvars'
   
   # PR events → Run plan
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    branches:
-      - Dev
-      - Staging
-      - Production
   
   # Manual trigger
   workflow_dispatch:

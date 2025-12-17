@@ -15,7 +15,7 @@ policies = {
    Demo-Policy = {
         name        = "Demo-Policy"
         compartment_id = "root"
-        policy_description = "Demo Poclicy"
+        policy_description = "Demo Policy - Test Trigger"
         policy_statements = [ "allow group demo-group to read all-resources in tenancy"  ]
             },
  }
