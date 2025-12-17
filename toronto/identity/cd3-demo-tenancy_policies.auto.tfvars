@@ -4,6 +4,7 @@
 ############################
 # Identity
 # Policies - tfvars
+# Test workflow trigger
 # Allowed Values:
 # compartment_id can be the ocid or the name of the compartment hierarchy delimited by double hiphens "--"
 # Example : compartment_id = "ocid1.compartment.oc1..aaaaaaaahwwiefb56epvdlzfic6ah6jy3xf3c" or compartment_id = "Security--Prod" where "Security" is the parent of "Prod" compartment
@@ -18,3 +19,4 @@ policies = {
         policy_statements = [ "allow group demo-group to read all-resources in tenancy"  ]
             },
  }
+
