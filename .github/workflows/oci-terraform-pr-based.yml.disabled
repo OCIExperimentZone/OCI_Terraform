@@ -1,0 +1,401 @@
+# =============================================================================
+# OCI CENTRALIZED TERRAFORM CONTROLLER - WITH PR APPROVAL FLOW
+# =============================================================================
+# Enhanced workflow with:
+# - Auto-PR creation from feature branches
+# - Terraform plan on PR (with approval wait)
+# - Terraform apply only after PR merge
+# - Manual approval gates for production
+# =============================================================================
+
+name: 🎯 OCI Terraform Controller (PR-Based)
+
+run-name: "[${{ github.event_name }}] ${{ github.ref_name }} by @${{ github.actor }}"
+
+on:
+  # Feature branch pushes → Auto-create PR
+  push:
+    branches:
+      - 'feature/**'
+      - 'fix/**'
+      - 'update/**'
+  
+  # PR events → Run plan and wait for approval
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - Dev
+      - Staging
+      - Production
+  
+  # Merge to main branches → Run apply
+  push:
+    branches:
+      - Dev
+      - Staging
+      - Production
+  
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+        default: 'plan'
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - Dev
+          - Staging
+          - Production
+        default: 'Dev'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+env:
+  TERRAFORM_VERSION: '1.5.6'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ===========================================================================
+  # JOB 1: AUTO-CREATE PR FROM FEATURE BRANCHES
+  # ===========================================================================
+  auto-create-pr:
+    name: 🔀 Auto-Create PR
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' && 
+      (startsWith(github.ref, 'refs/heads/feature/') || 
+       startsWith(github.ref, 'refs/heads/fix/') || 
+       startsWith(github.ref, 'refs/heads/update/'))
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+      
+      - name: 🔍 Detect Changed Services
+        id: detect
+        run: |
+          # Quick check for toronto/ changes
+          if git diff --name-only HEAD^ | grep -q "^toronto/"; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            
+            # Extract changed services
+            SERVICES=$(git diff --name-only HEAD^ | grep "^toronto/" | cut -d'/' -f2 | sort -u | tr '\n' ',' | sed 's/,$//')
+            echo "services=$SERVICES" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: 🔀 Create Pull Request
+        if: steps.detect.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref_name }}
+          base: Dev
+          title: "🚀 [Auto] OCI Terraform Update - ${{ steps.detect.outputs.services }}"
+          body: |
+            ## 🎯 Automated Terraform Infrastructure Update
+            
+            **Branch:** `${{ github.ref_name }}`  
+            **Changed Services:** `${{ steps.detect.outputs.services }}`  
+            **Triggered by:** @${{ github.actor }}
+            
+            ### 📋 What This PR Does
+            This PR contains OCI infrastructure changes detected in the following services:
+            - Services: `${{ steps.detect.outputs.services }}`
+            
+            ### ✅ Next Steps
+            1. **Review** the terraform plan output below (posted automatically)
+            2. **Approve** this PR if changes look correct
+            3. **Merge** to trigger terraform apply
+            
+            ### 🤖 Automation Status
+            - [ ] Terraform plan completed
+            - [ ] Plan reviewed
+            - [ ] PR approved
+            - [ ] Ready to merge
+            
+            ---
+            *This PR was created automatically by OCI Terraform Controller*
+          labels: |
+            terraform
+            auto-created
+            oci-infrastructure
+          draft: false
+
+  # ===========================================================================
+  # JOB 2: TERRAFORM PLAN (ON PR)
+  # ===========================================================================
+  terraform-plan:
+    name: 📋 Terraform Plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: 📋 PR Details
+        run: |
+          echo "════════════════════════════════════════════════════════════════"
+          echo "🔍 TERRAFORM PLAN - PR VALIDATION"
+          echo "════════════════════════════════════════════════════════════════"
+          echo "PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
+          echo "From: ${{ github.head_ref }} → ${{ github.base_ref }}"
+          echo "Author: ${{ github.event.pull_request.user.login }}"
+          echo "════════════════════════════════════════════════════════════════"
+      
+      - name: 📥 Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      
+      - name: 🔐 Configure OCI CLI
+        run: |
+          mkdir -p ~/.oci
+          cat > ~/.oci/config << EOF
+          [DEFAULT]
+          user=${{ secrets.OCI_USER }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY }}
+          region=${{ secrets.OCI_REGION }}
+          key_file=~/.oci/oci_api_key.pem
+          EOF
+          echo "${{ secrets.OCI_PRIVATE_KEY }}" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+          
+          echo "TF_VAR_tenancy_ocid=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+          echo "TF_VAR_user_ocid=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+          echo "TF_VAR_region=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
+          echo "TF_VAR_fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
+          echo "TF_VAR_private_key_path=$HOME/.oci/oci_api_key.pem" >> $GITHUB_ENV
+          echo "OCI_CLI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+          echo "OCI_CLI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+          echo "OCI_CLI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
+      
+      - name: 🔐 Configure AWS Credentials (State Backend)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: oci-terraform-plan
+      
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: 📦 Install Dependencies
+        run: pip install -r scripts/requirements.txt
+      
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      
+      - name: 📋 Run Terraform Plan
+        id: plan
+        run: |
+          python scripts/oci-terraform-orchestrator.py \
+            --action plan \
+            --working-dir "${{ github.workspace }}/toronto" \
+            --base-ref "origin/${{ github.base_ref }}" \
+            --region "${{ secrets.OCI_REGION }}" \
+            --debug
+      
+      - name: 💬 Post Plan Results
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            
+            let comment = '';
+            try {
+              comment = fs.readFileSync('terraform-results.md', 'utf8');
+            } catch (error) {
+              comment = `## ❌ Plan Failed\n\nFailed to generate plan. Check logs for details.\n\nError: ${error.message}`;
+            }
+            
+            // Add approval checklist
+            comment += `\n\n## ✅ Approval Checklist\n\n`;
+            comment += `Before merging this PR, please verify:\n\n`;
+            comment += `- [ ] Terraform plan shows expected changes\n`;
+            comment += `- [ ] No unexpected resource deletions\n`;
+            comment += `- [ ] Service dependencies are correct\n`;
+            comment += `- [ ] Changes align with CD3 export or manual updates\n`;
+            comment += `\n**⚠️  Merging this PR will trigger \`terraform apply\`**\n`;
+            
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            comment += `\n---\n🔗 [View Workflow Run](${runUrl})`;
+            
+            // Find existing plan comment
+            const { data: comments } = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            
+            const botComment = comments.find(c => 
+              c.user.type === 'Bot' && c.body.includes('Terraform Plan Results')
+            );
+            
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                comment_id: botComment.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+      
+      - name: 📤 Upload Plan Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ github.event.pull_request.number }}
+          path: |
+            terraform-results.md
+            terraform-audit.json
+          retention-days: 30
+
+  # ===========================================================================
+  # JOB 3: TERRAFORM APPLY (ON MERGE) - WITH APPROVAL GATE
+  # ===========================================================================
+  terraform-apply:
+    name: 🚀 Terraform Apply
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' && 
+      (github.ref == 'refs/heads/Dev' || 
+       github.ref == 'refs/heads/Staging' || 
+       github.ref == 'refs/heads/Production')
+    
+    # Production requires manual approval
+    environment:
+      name: ${{ github.ref == 'refs/heads/Production' && 'production' || github.ref == 'refs/heads/Staging' && 'staging' || 'development' }}
+    
+    steps:
+      - name: 🚀 Apply Details
+        run: |
+          echo "════════════════════════════════════════════════════════════════"
+          echo "🚀 TERRAFORM APPLY - DEPLOYMENT"
+          echo "════════════════════════════════════════════════════════════════"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Environment: ${{ github.ref == 'refs/heads/Production' && 'PRODUCTION' || github.ref == 'refs/heads/Staging' && 'STAGING' || 'DEVELOPMENT' }}"
+          echo "════════════════════════════════════════════════════════════════"
+      
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 🔐 Configure OCI CLI
+        run: |
+          mkdir -p ~/.oci
+          cat > ~/.oci/config << EOF
+          [DEFAULT]
+          user=${{ secrets.OCI_USER }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY }}
+          region=${{ secrets.OCI_REGION }}
+          key_file=~/.oci/oci_api_key.pem
+          EOF
+          echo "${{ secrets.OCI_PRIVATE_KEY }}" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+          
+          echo "TF_VAR_tenancy_ocid=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+          echo "TF_VAR_user_ocid=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+          echo "TF_VAR_region=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
+          echo "TF_VAR_fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
+          echo "TF_VAR_private_key_path=$HOME/.oci/oci_api_key.pem" >> $GITHUB_ENV
+          echo "OCI_CLI_USER=${{ secrets.OCI_USER }}" >> $GITHUB_ENV
+          echo "OCI_CLI_TENANCY=${{ secrets.OCI_TENANCY }}" >> $GITHUB_ENV
+          echo "OCI_CLI_REGION=${{ secrets.OCI_REGION }}" >> $GITHUB_ENV
+      
+      - name: 🔐 Configure AWS Credentials (State Backend)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: oci-terraform-apply
+      
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: 📦 Install Dependencies
+        run: pip install -r scripts/requirements.txt
+      
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      
+      - name: 🚀 Run Terraform Apply
+        id: apply
+        run: |
+          python scripts/oci-terraform-orchestrator.py \
+            --action apply \
+            --working-dir "${{ github.workspace }}/toronto" \
+            --base-ref "HEAD^" \
+            --region "${{ secrets.OCI_REGION }}" \
+            --debug
+      
+      - name: 📤 Upload Apply Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-apply-${{ github.run_number }}-${{ github.ref_name }}
+          path: |
+            terraform-results.md
+            terraform-audit.json
+          retention-days: 90  # Keep apply results longer
+      
+      - name: 📊 Create Deployment Summary
+        if: always()
+        run: |
+          echo "## 🚀 Terraform Apply Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f terraform-results.md ]; then
+            cat terraform-results.md >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: 🎯 Final Status
+        if: always()
+        run: |
+          echo "════════════════════════════════════════════════════════════════"
+          if [[ "${{ steps.apply.outcome }}" == "success" ]]; then
+            echo "✅ TERRAFORM APPLY SUCCESSFUL"
+          else
+            echo "❌ TERRAFORM APPLY FAILED"
+          fi
+          echo "════════════════════════════════════════════════════════════════"
