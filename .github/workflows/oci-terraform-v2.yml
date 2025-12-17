@@ -177,10 +177,10 @@ jobs:
           if [ -n "$PR_NUM" ]; then
             echo "📝 Posting comment to PR #$PR_NUM..."
             
-            gh pr comment $PR_NUM --body "## 🚀 Auto-Created Terraform PR (v2.0)
+            COMMENT_BODY="## 🚀 Auto-Created Terraform PR (v2.0)
 
 ### 📦 Changes Detected
-**Services:** \`${{ steps.detect.outputs.services }}\`
+**Services:** ${{ steps.detect.outputs.services }}
 
 ### 🔄 Next Steps
 1. **Terraform Plan** will run automatically
@@ -191,6 +191,7 @@ jobs:
 ---
 ⏳ *Waiting for terraform plan to complete...*"
             
+            gh pr comment $PR_NUM --body "$COMMENT_BODY"
             echo "✅ Initial comment posted!"
           else
             echo "⚠️  Could not find PR number"
