@@ -1,0 +1,58 @@
+# =============================================================================
+# OCI TERRAFORM CALLER WORKFLOW
+# =============================================================================
+# This workflow calls the reusable workflow from main branch
+# Minimal configuration - all logic is in the reusable workflow
+# =============================================================================
+
+name: 🎯 OCI Terraform
+
+run-name: "🚀 OCI Terraform: ${{ github.ref_name }} → ${{ github.base_ref || 'Dev' }} [@${{ github.actor }}]"
+
+on:
+  # Any branch pushes with tfvars changes
+  push:
+    paths:
+      - 'toronto/**/*.tfvars'
+  
+  # PR events
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      parallel:
+        description: 'Enable parallel execution'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+  actions: write
+
+jobs:
+  call-reusable-workflow:
+    name: 📞 Call Reusable Workflow
+    uses: OCIExperimentZone/OCI_Terraform/.github/workflows/oci-terraform-reusable.yml@main
+    with:
+      working_dir: 'toronto'
+      terraform_version: '1.5.6'
+      python_version: '3.11'
+      parallel: ${{ inputs.parallel || true }}
+      max_workers: 3
+      base_branch: 'Dev'
+    secrets:
+      GT_APP_ID: ${{ secrets.GT_APP_ID }}
+      GT_APP_PRIVATE_KEY: ${{ secrets.GT_APP_PRIVATE_KEY }}
+      OCI_USER: ${{ secrets.OCI_USER }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
