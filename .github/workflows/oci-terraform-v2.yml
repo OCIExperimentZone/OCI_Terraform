@@ -345,13 +345,7 @@ jobs:
     
     # Environment-based approval gates
     environment:
-      name: ${{ 
-        github.ref == 'refs/heads/Production' && 'production' || 
-        github.ref == 'refs/heads/Staging' && 'staging' || 
-        inputs.environment == 'Production' && 'production' ||
-        inputs.environment == 'Staging' && 'staging' ||
-        'development' 
-      }}
+      name: ${{ (github.ref == 'refs/heads/Production' || inputs.environment == 'Production') && 'production' || (github.ref == 'refs/heads/Staging' || inputs.environment == 'Staging') && 'staging' || 'development' }}
     
     steps:
       - name: 🚀 Apply Details
