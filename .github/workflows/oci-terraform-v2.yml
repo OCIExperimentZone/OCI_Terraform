@@ -36,7 +36,6 @@ env:
   TERRAFORM_VERSION: '1.5.6'
   PYTHON_VERSION: '3.11'
   ORCHESTRATOR_VERSION: '2.0'
-  WORKING_DIR: 'toronto'
 
 jobs:
   # ===========================================================================
@@ -70,11 +69,10 @@ jobs:
         run: |
           set -euo pipefail
           
-          echo "🔍 Detecting TFVARS file changes..."
-          echo "📂 Working directory: ${{ env.WORKING_DIR }}"
+          echo "🔍 Detecting TFVARS file changes (DYNAMIC - any directory)..."
           
-          # Detect changed .tfvars files FIRST (before checking existing PR)
-          changed_files=$(git diff --name-only HEAD~1 HEAD | grep "^${{ env.WORKING_DIR }}/.*\.tfvars$" || true)
+          # Detect changed .tfvars files across ENTIRE repo (NO WORKING_DIR filter!)
+          changed_files=$(git diff --name-only HEAD~1 HEAD | grep '\.tfvars$' || true)
           
           if [[ -z "$changed_files" ]]; then
             echo "⏭️  No .tfvars files changed - skipping"
@@ -84,7 +82,13 @@ jobs:
           
           echo "has_changes=true" >> $GITHUB_OUTPUT
           
-          # Extract changed services (directories containing changed tfvars)
+          # Extract REGION dynamically from first changed file path (e.g., toronto/...)
+          first_file=$(echo "$changed_files" | head -1)
+          REGION=$(echo "$first_file" | cut -d'/' -f1)
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "📍 Detected region: $REGION"
+          
+          # Extract changed services (2nd level directories: region/SERVICE/file.tfvars)
           SERVICES=$(echo "$changed_files" | cut -d'/' -f2 | sort -u | paste -sd',' -)
           echo "services=$SERVICES" >> $GITHUB_OUTPUT
           echo "✅ Changed services: $SERVICES"
@@ -134,11 +138,15 @@ jobs:
           SERVICES="${{ steps.detect.outputs.services }}"
           FILE_COUNT="${{ steps.detect.outputs.file_count }}"
           
+          # Get dynamically detected region
+          REGION="${{ steps.detect.outputs.region }}"
+          
           # Build PR body
           cat > /tmp/pr_body.md << EOF
           ## 🔧 OCI Terraform Configuration Update (v2.0)
           
           **📊 Summary:**
+          - Region: \`${REGION}\`
           - Services: \`${SERVICES}\`
           - Environment: \`Dev\`
           - Changed files: ${FILE_COUNT}
@@ -158,9 +166,9 @@ jobs:
           *🤖 Auto-generated PR - Powered by OCI Terraform Orchestrator v2.0*
           EOF
           
-          # Create PR
+          # Create PR with region in title
           gh pr create \
-            --title "🔧 OCI Terraform: ${SERVICES} [Dev]" \
+            --title "🔧 OCI Terraform: ${REGION}/${SERVICES} [Dev]" \
             --body "$(cat /tmp/pr_body.md)" \
             --head "${current_branch}" \
             --base "${target_branch}"
@@ -266,14 +274,37 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
       
+      - name: � Detect Region for Plan
+        id: detect-region
+        run: |
+          set -euo pipefail
+          
+          BASE_REF="${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD^' }}"
+          
+          # Dynamically detect which region has changes
+          changed_files=$(git diff --name-only $BASE_REF HEAD | grep '\.tfvars$' || true)
+          
+          if [[ -z "$changed_files" ]]; then
+            echo "❌ No .tfvars files changed"
+            exit 1
+          fi
+          
+          # Extract region from first changed file (e.g., toronto/identity/test.tfvars → toronto)
+          first_file=$(echo "$changed_files" | head -1)
+          REGION=$(echo "$first_file" | cut -d'/' -f1)
+          
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "📍 Detected region for plan: $REGION"
+      
       - name: 📋 Run Terraform Plan (v2 with dependencies)
         id: plan
         run: |
           BASE_REF="${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD^' }}"
+          REGION="${{ steps.detect-region.outputs.region }}"
           
           python3 scripts/oci-terraform-orchestrator-v2.py \
             --action plan \
-            --working-dir "${{ github.workspace }}/${{ env.WORKING_DIR }}" \
+            --working-dir "${{ github.workspace }}/${REGION}" \
             --base-ref "$BASE_REF" \
             --region "${{ secrets.OCI_REGION }}" \
             --parallel \
@@ -431,14 +462,35 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
       
+      - name: � Detect Region for Apply
+        id: detect-region
+        run: |
+          set -euo pipefail
+          
+          # Dynamically detect which region has changes
+          changed_files=$(git diff --name-only HEAD^ HEAD | grep '\.tfvars$' || true)
+          
+          if [[ -z "$changed_files" ]]; then
+            echo "❌ No .tfvars files changed"
+            exit 1
+          fi
+          
+          # Extract region from first changed file
+          first_file=$(echo "$changed_files" | head -1)
+          REGION=$(echo "$first_file" | cut -d'/' -f1)
+          
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "📍 Detected region for apply: $REGION"
+      
       - name: 🚀 Run Terraform Apply (v2 with dependencies)
         id: apply
         run: |
           PARALLEL_FLAG="${{ inputs.parallel == 'true' || github.event_name == 'push' && '--parallel' || '' }}"
+          REGION="${{ steps.detect-region.outputs.region }}"
           
           python3 scripts/oci-terraform-orchestrator-v2.py \
             --action apply \
-            --working-dir "${{ github.workspace }}/${{ env.WORKING_DIR }}" \
+            --working-dir "${{ github.workspace }}/${REGION}" \
             --base-ref "HEAD^" \
             --region "${{ secrets.OCI_REGION }}" \
             $PARALLEL_FLAG \
