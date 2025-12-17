@@ -13,7 +13,7 @@
 
 name: 🎯 OCI Terraform Controller v2.0
 
-run-name: "[v2] ${{ github.event_name }} → ${{ github.ref_name }} by @${{ github.actor }}"
+run-name: "🚀 OCI Terraform: ${{ github.ref_name }} → ${{ github.base_ref || 'Dev' }} [@${{ github.actor }}]"
 
 on:
   # Any branch pushes (job conditions control what runs)
@@ -140,11 +140,39 @@ jobs:
             gh pr list --head ${{ github.ref_name }} --base Dev --state open
           else
             echo "🔄 Creating new Pull Request..."
+            
+            # Get changed files for PR body
+            CHANGED_FILES=$(git diff --name-only HEAD^ | grep "^${{ env.WORKING_DIR }}/.*\.tfvars$")
+            FILE_COUNT=$(echo "$CHANGED_FILES" | wc -l | tr -d ' ')
+            SERVICES="${{ steps.detect.outputs.services }}"
+            
+            # Build PR body line by line
+            echo "## OCI Terraform Configuration Update (v2.0)" > /tmp/pr_body.md
+            echo "" >> /tmp/pr_body.md
+            echo "**Summary:**" >> /tmp/pr_body.md
+            echo "- **Services:** \`${SERVICES}\`" >> /tmp/pr_body.md
+            echo "- **Environment:** \`Dev\`" >> /tmp/pr_body.md
+            echo "- **Changed Files:** ${FILE_COUNT}" >> /tmp/pr_body.md
+            echo "- **Source Branch:** \`${{ github.ref_name }}\`" >> /tmp/pr_body.md
+            echo "" >> /tmp/pr_body.md
+            echo "**Changed Files:**" >> /tmp/pr_body.md
+            echo "$CHANGED_FILES" | sed 's/^/- `/' | sed 's/$/`/' >> /tmp/pr_body.md
+            echo "" >> /tmp/pr_body.md
+            echo "**Automated Workflow (v2.0):**" >> /tmp/pr_body.md
+            echo "1. Terraform Plan with dependency ordering" >> /tmp/pr_body.md
+            echo "2. Review plan results (auto-posted below)" >> /tmp/pr_body.md
+            echo "3. Human review & approval required" >> /tmp/pr_body.md
+            echo "4. Merge to trigger terraform apply" >> /tmp/pr_body.md
+            echo "5. Apply with dependency-aware execution" >> /tmp/pr_body.md
+            echo "" >> /tmp/pr_body.md
+            echo "---" >> /tmp/pr_body.md
+            echo "*Auto-generated PR - Powered by OCI Terraform Orchestrator v2.0*" >> /tmp/pr_body.md
+            
             gh pr create \
               --base Dev \
               --head ${{ github.ref_name }} \
-              --title "🚀 [Auto] Terraform Update - ${{ steps.detect.outputs.services }}" \
-              --body "Automated Terraform TFVARS Update - Services: ${{ steps.detect.outputs.services }}"
+              --title "OCI Terraform: ${SERVICES} [Dev]" \
+              --body-file /tmp/pr_body.md
             
             if [ $? -eq 0 ]; then
               echo "✅ Pull Request created successfully!"
@@ -163,27 +191,23 @@ jobs:
           PR_NUM=$(gh pr list --head ${{ github.ref_name }} --base Dev --state open --json number --jq '.[0].number')
           
           if [ -n "$PR_NUM" ]; then
-            echo "Posting comment to PR #$PR_NUM..."
+            echo "Posting initial status comment to PR #$PR_NUM..."
             
-            SERVICES="${{ steps.detect.outputs.services }}"
-            echo "## Auto-Created Terraform PR (v2.0)" > /tmp/pr-comment.txt
+            echo "## ⏳ Terraform Plan Running..." > /tmp/pr-comment.txt
             echo "" >> /tmp/pr-comment.txt
-            echo "### Changes Detected" >> /tmp/pr-comment.txt
-            echo "Services: ${SERVICES}" >> /tmp/pr-comment.txt
+            echo "The v2.0 orchestrator is analyzing your changes and generating a terraform plan." >> /tmp/pr-comment.txt
             echo "" >> /tmp/pr-comment.txt
-            echo "### Next Steps" >> /tmp/pr-comment.txt
-            echo "1. Terraform Plan will run automatically" >> /tmp/pr-comment.txt
-            echo "2. Review the plan results (posted below)" >> /tmp/pr-comment.txt
-            echo "3. Approve if changes look correct" >> /tmp/pr-comment.txt
-            echo "4. Merge to trigger terraform apply with dependency ordering" >> /tmp/pr-comment.txt
+            echo "**Features enabled:**" >> /tmp/pr-comment.txt
+            echo "- ✅ Dependency-aware execution order" >> /tmp/pr-comment.txt
+            echo "- ✅ Parallel processing capability" >> /tmp/pr-comment.txt
+            echo "- ✅ Module change detection" >> /tmp/pr-comment.txt
             echo "" >> /tmp/pr-comment.txt
-            echo "---" >> /tmp/pr-comment.txt
-            echo "Waiting for terraform plan to complete..." >> /tmp/pr-comment.txt
+            echo "Results will be posted here shortly..." >> /tmp/pr-comment.txt
             
             gh pr comment $PR_NUM --body-file /tmp/pr-comment.txt
-            echo "Initial comment posted!"
+            echo "✅ Status comment posted!"
           else
-            echo "Could not find PR number"
+            echo "⚠️ Could not find PR number"
           fi
 
   # ===========================================================================
