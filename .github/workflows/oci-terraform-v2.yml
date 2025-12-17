@@ -171,31 +171,30 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get PR number
           PR_NUM=$(gh pr list --head ${{ github.ref_name }} --base Dev --state open --json number --jq '.[0].number')
           
           if [ -n "$PR_NUM" ]; then
-            echo "📝 Posting comment to PR #$PR_NUM..."
+            echo "Posting comment to PR #$PR_NUM..."
             
             SERVICES="${{ steps.detect.outputs.services }}"
+            echo "## Auto-Created Terraform PR (v2.0)" > /tmp/pr-comment.txt
+            echo "" >> /tmp/pr-comment.txt
+            echo "### Changes Detected" >> /tmp/pr-comment.txt
+            echo "Services: ${SERVICES}" >> /tmp/pr-comment.txt
+            echo "" >> /tmp/pr-comment.txt
+            echo "### Next Steps" >> /tmp/pr-comment.txt
+            echo "1. Terraform Plan will run automatically" >> /tmp/pr-comment.txt
+            echo "2. Review the plan results (posted below)" >> /tmp/pr-comment.txt
+            echo "3. Approve if changes look correct" >> /tmp/pr-comment.txt
+            echo "4. Merge to trigger terraform apply with dependency ordering" >> /tmp/pr-comment.txt
+            echo "" >> /tmp/pr-comment.txt
+            echo "---" >> /tmp/pr-comment.txt
+            echo "Waiting for terraform plan to complete..." >> /tmp/pr-comment.txt
             
-            gh pr comment $PR_NUM --body "## 🚀 Auto-Created Terraform PR (v2.0)
-
-### 📦 Changes Detected
-**Services:** ${SERVICES}
-
-### 🔄 Next Steps
-1. **Terraform Plan** will run automatically
-2. **Review** the plan results (posted below)
-3. **Approve** if changes look correct
-4. **Merge** to trigger terraform apply with dependency ordering
-
----
-⏳ *Waiting for terraform plan to complete...*"
-            
-            echo "✅ Initial comment posted!"
+            gh pr comment $PR_NUM --body-file /tmp/pr-comment.txt
+            echo "Initial comment posted!"
           else
-            echo "⚠️  Could not find PR number"
+            echo "Could not find PR number"
           fi
 
   # ===========================================================================
