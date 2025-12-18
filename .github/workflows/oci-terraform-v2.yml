@@ -392,18 +392,44 @@ jobs:
       - name: 📋 Run Terraform Plan (v2 with dependencies)
         id: plan
         run: |
-          REGION="${{ steps.detect-region.outputs.region }}"
+          REGION_DIR="${{ steps.detect-region.outputs.region }}"
           
-          echo "🎯 Running Terraform Plan for region: $REGION"
-          echo "📊 Changed files count: ${{ steps.detect-region.outputs.file_count }}"
+          # Map directory name to OCI region code
+          case "$REGION_DIR" in
+            toronto)
+              OCI_REGION="ca-toronto-1"
+              ;;
+            ashburn)
+              OCI_REGION="us-ashburn-1"
+              ;;
+            phoenix)
+              OCI_REGION="us-phoenix-1"
+              ;;
+            london)
+              OCI_REGION="uk-london-1"
+              ;;
+            frankfurt)
+              OCI_REGION="eu-frankfurt-1"
+              ;;
+            *)
+              # Default or use secrets
+              OCI_REGION="${{ secrets.OCI_REGION }}"
+              echo "⚠️  Unknown region directory: $REGION_DIR, using default: $OCI_REGION"
+              ;;
+          esac
           
-          # Save changed files for orchestrator (if it needs them)
+          echo "🎯 Running Terraform Plan"
+          echo "   Directory: $REGION_DIR"
+          echo "   OCI Region: $OCI_REGION"
+          echo "   Changed files: ${{ steps.detect-region.outputs.file_count }}"
+          
+          # Save changed files for orchestrator
           echo '${{ steps.detect-region.outputs.changed_files }}' > /tmp/changed-files.txt
           
           python3 scripts/oci-terraform-orchestrator-v2.py \
             --action plan \
-            --working-dir "${{ github.workspace }}/${REGION}" \
-            --region "${{ secrets.OCI_REGION }}" \
+            --working-dir "${{ github.workspace }}/${REGION_DIR}" \
+            --region "$OCI_REGION" \
             --parallel \
             --max-workers 3 \
             --debug
@@ -660,19 +686,44 @@ jobs:
         id: apply
         run: |
           PARALLEL_FLAG="${{ inputs.parallel == 'true' || github.event_name == 'push' && '--parallel' || '' }}"
-          REGION="${{ steps.detect-region.outputs.region }}"
+          REGION_DIR="${{ steps.detect-region.outputs.region }}"
           
-          echo "🎯 Running Terraform Apply for region: $REGION"
-          echo "🔧 Services: ${{ steps.detect-region.outputs.services }}"
-          echo "📊 Changed files count: ${{ steps.detect-region.outputs.file_count }}"
+          # Map directory name to OCI region code
+          case "$REGION_DIR" in
+            toronto)
+              OCI_REGION="ca-toronto-1"
+              ;;
+            ashburn)
+              OCI_REGION="us-ashburn-1"
+              ;;
+            phoenix)
+              OCI_REGION="us-phoenix-1"
+              ;;
+            london)
+              OCI_REGION="uk-london-1"
+              ;;
+            frankfurt)
+              OCI_REGION="eu-frankfurt-1"
+              ;;
+            *)
+              OCI_REGION="${{ secrets.OCI_REGION }}"
+              echo "⚠️  Unknown region directory: $REGION_DIR, using default: $OCI_REGION"
+              ;;
+          esac
           
-          # Save changed files for orchestrator (if it needs them)
+          echo "🎯 Running Terraform Apply"
+          echo "   Directory: $REGION_DIR"
+          echo "   OCI Region: $OCI_REGION"
+          echo "   Services: ${{ steps.detect-region.outputs.services }}"
+          echo "   Changed files: ${{ steps.detect-region.outputs.file_count }}"
+          
+          # Save changed files for orchestrator
           echo '${{ steps.detect-region.outputs.changed_files }}' > /tmp/changed-files.txt
           
           python3 scripts/oci-terraform-orchestrator-v2.py \
             --action apply \
-            --working-dir "${{ github.workspace }}/${REGION}" \
-            --region "${{ secrets.OCI_REGION }}" \
+            --working-dir "${{ github.workspace }}/${REGION_DIR}" \
+            --region "$OCI_REGION" \
             $PARALLEL_FLAG \
             --max-workers 3 \
             --debug
