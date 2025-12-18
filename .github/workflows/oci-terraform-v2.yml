@@ -444,18 +444,20 @@ jobs:
           fi
       
       - name: 💬 Post Plan Results to PR
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           github-token: ${{ steps.auth.outputs.token }}
           script: |
             const fs = require('fs');
             
-            let comment = '';
+            let comment = '## 📋 Terraform Plan Results\n\n';
+            
             try {
-              comment = fs.readFileSync('terraform-results.md', 'utf8');
+              const results = fs.readFileSync('terraform-results.md', 'utf8');
+              comment += results;
             } catch (error) {
-              comment = `## ❌ Plan Failed\n\nFailed to generate plan. Check workflow logs.\n\nError: ${error.message}`;
+              comment += `## ❌ Plan Failed\n\nFailed to generate plan. Check workflow logs.\n\nError: ${error.message}`;
             }
             
             // Add v2 specific notes
