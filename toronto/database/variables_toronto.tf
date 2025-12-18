@@ -10,27 +10,22 @@
 
 variable "tenancy_ocid" {
   type    = string
-  default = "ocid1.tenancy.oc1..aaaaaaaa35q2p5p4e74pu5j4gg46yysktby3osjmlaxk255fkcabyhirvqoa"
 }
 
 variable "user_ocid" {
   type    = string
-  default = "ocid1.user.oc1..aaaaaaaayo34zcavmlzfl5pbeftdwhzkfjz6hjrcurt6v3mvl6uzua3pvh5q"
 }
 
 variable "fingerprint" {
   type    = string
-  default = "a2:8d:ed:35:9a:f8:70:61:b7:bd:84:08:a0:d7:6d:df"
 }
 
 variable "private_key_path" {
   type    = string
-  default = "/cd3user/tenancies//cd3-demo-tenancy/.config_files/oci_api_private.pem"
 }
 
 variable "region" {
   type    = string
-  default = "ca-toronto-1"
 }
 
 #################################

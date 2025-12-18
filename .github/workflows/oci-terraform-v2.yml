@@ -13,43 +13,18 @@
 
 name: 🎯 OCI Terraform Controller v2.0
 
-run-name: "[v2] ${{ github.event_name }} → ${{ github.ref_name }} by @${{ github.actor }}"
+run-name: "${{ github.event.pull_request.number && format('PR #{0}', github.event.pull_request.number) || github.ref_name }}"
 
 on:
-  # Any branch pushes (job conditions control what runs)
   push:
-    paths:
-      - '**/**/*.tfvars'
+    paths: ['**/*.tfvars']
   
-  # PR events → Run plan
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, closed]
+    paths: ['**/*.tfvars']
   
-  # Manual trigger
-  workflow_dispatch:
-    inputs:
-      action:
-        description: 'Action to perform'
-        required: true
-        type: choice
-        options:
-          - plan
-          - apply
-        default: 'plan'
-      environment:
-        description: 'Target environment'
-        required: true
-        type: choice
-        options:
-          - Dev
-          - Staging
-          - Production
-        default: 'Dev'
-      parallel:
-        description: 'Enable parallel execution'
-        required: false
-        type: boolean
-        default: true
+  pull_request_review:
+    types: [submitted]
 
 permissions:
   contents: write
@@ -62,7 +37,9 @@ env:
   TERRAFORM_VERSION: '1.5.6'
   PYTHON_VERSION: '3.11'
   ORCHESTRATOR_VERSION: '2.0'
-  WORKING_DIR: 'toronto'  # Your service directory with tfvars files
+  # Dynamic branch configuration
+  FEATURE_BRANCHES: 'feature/,fix/,update/,hotfix/'
+  DEFAULT_TARGET_BRANCH: 'Dev'
 
 jobs:
   # ===========================================================================
@@ -73,10 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'push' && 
-      (startsWith(github.ref, 'refs/heads/feature/') || 
-       startsWith(github.ref, 'refs/heads/fix/') || 
-       startsWith(github.ref, 'refs/heads/update/') ||
-       startsWith(github.ref, 'refs/heads/hotfix/'))
+      !contains(fromJSON('["refs/heads/Dev", "refs/heads/Staging", "refs/heads/Production", "refs/heads/main"]'), github.ref) &&
+      !contains(github.event.head_commit.message, '[skip-ci]')
     
     steps:
       - name: � Generate GitHub App Token
@@ -89,101 +64,146 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2
       
       - name: 🔍 Detect Changes
         id: detect
         run: |
-          echo "🔍 Detecting TFVARS file changes only..."
+          set -euo pipefail
           
-          # Get base ref for comparison
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE_REF="origin/${{ github.base_ref }}"
-          else
-            BASE_REF="HEAD^"
-          fi
+          echo "🔍 Detecting TFVARS file changes (DYNAMIC - any directory)..."
           
-          echo "📊 Comparing against: $BASE_REF"
+          # Detect changed .tfvars files across ENTIRE repo (NO WORKING_DIR filter!)
+          changed_files=$(git diff --name-only HEAD~1 HEAD | grep '\.tfvars$' || true)
           
-          # Detect ONLY .tfvars files in working directory
-          if git diff --name-only $BASE_REF | grep -qE "^${{ env.WORKING_DIR }}/.*\.tfvars$"; then
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            
-            # Extract changed services (directories containing changed tfvars)
-            SERVICES=$(git diff --name-only $BASE_REF | grep "^${{ env.WORKING_DIR }}/.*\.tfvars$" | cut -d'/' -f2 | sort -u | tr '\n' ',' | sed 's/,$//')
-            echo "services=$SERVICES" >> $GITHUB_OUTPUT
-            echo "✅ Changed services: $SERVICES"
-            
-            # Show which tfvars files changed
-            echo "📝 Changed tfvars files:"
-            git diff --name-only $BASE_REF | grep "^${{ env.WORKING_DIR }}/.*\.tfvars$"
-          else
+          if [[ -z "$changed_files" ]]; then
+            echo "⏭️  No .tfvars files changed - skipping"
             echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "⏭️  No tfvars changes detected"
+            exit 0
           fi
+          
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+          
+          # Extract REGION dynamically from first changed file path (e.g., toronto/...)
+          first_file=$(echo "$changed_files" | head -1)
+          REGION=$(echo "$first_file" | cut -d'/' -f1)
+          echo "region=$REGION" >> $GITHUB_OUTPUT
+          echo "📍 Detected region: $REGION"
+          
+          # Extract changed services (2nd level directories: region/SERVICE/file.tfvars)
+          SERVICES=$(echo "$changed_files" | cut -d'/' -f2 | sort -u | paste -sd',' -)
+          echo "services=$SERVICES" >> $GITHUB_OUTPUT
+          echo "✅ Changed services: $SERVICES"
+          
+          # Count files
+          FILE_COUNT=$(echo "$changed_files" | wc -l | tr -d ' ')
+          echo "file_count=$FILE_COUNT" >> $GITHUB_OUTPUT
+          
+          # Store changed files for PR body
+          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$changed_files" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          # Show which tfvars files changed
+          echo "📝 Changed tfvars files (${FILE_COUNT}):"
+          echo "$changed_files" | sed 's/^/  - /'
       
       - name: 🔀 Create Pull Request
         if: steps.detect.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
-          echo "======================================================"
-          echo "📝 Creating Pull Request"
-          echo "   Base: Dev"
-          echo "   Head: ${{ github.ref_name }}"
-          echo "   Services: ${{ steps.detect.outputs.services }}"
-          echo "======================================================"
+          set -euo pipefail
           
-          # Check if PR already exists
-          if gh pr list --head ${{ github.ref_name }} --base Dev --state open | grep -q "${{ github.ref_name }}"; then
-            echo "✅ Pull Request already exists:"
-            gh pr list --head ${{ github.ref_name }} --base Dev --state open
-          else
-            echo "🔄 Creating new Pull Request..."
-            gh pr create \
-              --base Dev \
-              --head ${{ github.ref_name }} \
-              --title "🚀 [Auto] Terraform Update - ${{ steps.detect.outputs.services }}" \
-              --body "Automated Terraform TFVARS Update - Services: ${{ steps.detect.outputs.services }}"
-            
-            if [ $? -eq 0 ]; then
-              echo "✅ Pull Request created successfully!"
-              gh pr list --head ${{ github.ref_name }} --base Dev --state open
-            else
-              echo "❌ Failed to create Pull Request"
-              exit 1
-            fi
+          current_branch="${{ github.ref_name }}"
+          
+          # Skip if push is to an environment branch  
+          if echo "$current_branch" | grep -qE "^(Dev|Staging|Production|main)$"; then
+            echo "⏭️ Skipping PR creation - push to environment branch: ${current_branch}"
+            exit 0
           fi
+          
+          # Get changed files list
+          changed_files="${{ steps.detect.outputs.changed_files }}"
+          
+          # Detect target branch dynamically (default to Dev)
+          target_branch="Dev"
+          
+          # Extract values
+          SERVICES="${{ steps.detect.outputs.services }}"
+          FILE_COUNT="${{ steps.detect.outputs.file_count }}"
+          REGION="${{ steps.detect.outputs.region }}"
+          
+          echo "🎯 FINAL Target Branch: ${target_branch}"
+          echo "📝 PR will be: ${current_branch} → ${target_branch}"
+          
+          # Check if PR already exists for this branch → target branch combination
+          existing_pr=$(gh pr list --head "${{ github.ref_name }}" --base "${target_branch}" --state open --json number --jq '.[0].number // ""')
+          
+          if [[ -n "$existing_pr" ]]; then
+            echo "ℹ️ PR #$existing_pr already exists (${current_branch} → ${target_branch})"
+            exit 0
+          fi
+          
+          # Create PR with dynamically determined target branch
+          cat > pr_body.md << EOF
+          ## 🔧 OCI Terraform Configuration Update
+          
+          **📊 Summary:**
+          - Region: \`${REGION}\`
+          - Services: \`${SERVICES}\`
+          - Target Branch: \`${target_branch}\`
+          - Changed files: ${FILE_COUNT}
+          - Source Branch: \`${{ github.ref_name }}\`
+          
+          **📁 Files:**
+          $(echo "$changed_files" | sed 's/^/- `/' | sed 's/$/`/')
+          
+          **🔄 Automated Workflow:**
+          1. ✅ Terraform plan with dependency ordering
+          2. 📋 Review plan results (auto-posted below)
+          3. 👀 Human review & approval required
+          4. 🚀 Merge to \`${target_branch}\` to trigger apply
+          5. 🎯 Terraform apply (automatic after merge)
+          
+          ---
+          *🤖 Auto-generated PR - DO NOT EDIT*
+          EOF
+          
+          gh pr create \
+            --title "🔧 OCI Terraform: ${REGION}/${SERVICES} [${target_branch}]" \
+            --body "$(cat pr_body.md)" \
+            --head "${{ github.ref_name }}" \
+            --base "${target_branch}"
+          
+          echo "✅ PR created successfully targeting ${target_branch}"
       
       - name: 💬 Post Initial PR Comment
         if: steps.detect.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
-          PR_NUM=$(gh pr list --head ${{ github.ref_name }} --base Dev --state open --json number --jq '.[0].number')
+          target_branch="Dev"
+          PR_NUM=$(gh pr list --head ${{ github.ref_name }} --base "${target_branch}" --state open --json number --jq '.[0].number')
           
           if [ -n "$PR_NUM" ]; then
-            echo "Posting comment to PR #$PR_NUM..."
+            echo "Posting initial status comment to PR #$PR_NUM..."
             
-            SERVICES="${{ steps.detect.outputs.services }}"
-            echo "## Auto-Created Terraform PR (v2.0)" > /tmp/pr-comment.txt
+            echo "## ⏳ Terraform Plan Running..." > /tmp/pr-comment.txt
             echo "" >> /tmp/pr-comment.txt
-            echo "### Changes Detected" >> /tmp/pr-comment.txt
-            echo "Services: ${SERVICES}" >> /tmp/pr-comment.txt
+            echo "The v2.0 orchestrator is analyzing your changes and generating a terraform plan." >> /tmp/pr-comment.txt
             echo "" >> /tmp/pr-comment.txt
-            echo "### Next Steps" >> /tmp/pr-comment.txt
-            echo "1. Terraform Plan will run automatically" >> /tmp/pr-comment.txt
-            echo "2. Review the plan results (posted below)" >> /tmp/pr-comment.txt
-            echo "3. Approve if changes look correct" >> /tmp/pr-comment.txt
-            echo "4. Merge to trigger terraform apply with dependency ordering" >> /tmp/pr-comment.txt
+            echo "**Features enabled:**" >> /tmp/pr-comment.txt
+            echo "- ✅ Dependency-aware execution order" >> /tmp/pr-comment.txt
+            echo "- ✅ Parallel processing capability" >> /tmp/pr-comment.txt
+            echo "- ✅ Module change detection" >> /tmp/pr-comment.txt
             echo "" >> /tmp/pr-comment.txt
-            echo "---" >> /tmp/pr-comment.txt
-            echo "Waiting for terraform plan to complete..." >> /tmp/pr-comment.txt
+            echo "Results will be posted here shortly..." >> /tmp/pr-comment.txt
             
             gh pr comment $PR_NUM --body-file /tmp/pr-comment.txt
-            echo "Initial comment posted!"
+            echo "✅ Status comment posted!"
           else
-            echo "Could not find PR number"
+            echo "⚠️ Could not find PR number"
           fi
 
   # ===========================================================================
@@ -192,24 +212,29 @@ jobs:
   terraform-plan:
     name: 📋 Terraform Plan (v2)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.action == 'plan')
+    if: |
+      github.event_name == 'pull_request' && 
+      contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action)
     
     outputs:
       has_changes: ${{ steps.plan.outputs.has_changes }}
       plan_summary: ${{ steps.plan.outputs.summary }}
     
     steps:
-      - name: 📋 PR Details
+      - name: � Generate GitHub App Token
+        id: auth
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GT_APP_ID }}
+          private-key: ${{ secrets.GT_APP_PRIVATE_KEY }}
+      
+      - name: �📋 PR Details
         run: |
           echo "════════════════════════════════════════════════════════════════"
           echo "🔍 TERRAFORM PLAN v2.0 - WITH DEPENDENCY ORDERING"
           echo "════════════════════════════════════════════════════════════════"
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
-            echo "From: ${{ github.head_ref }} → ${{ github.base_ref }}"
-          else
-            echo "Manual trigger: ${{ inputs.environment }}"
-          fi
+          echo "PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
+          echo "From: ${{ github.head_ref }} → ${{ github.base_ref }}"
           echo "════════════════════════════════════════════════════════════════"
       
       - name: 📥 Checkout
@@ -238,7 +263,74 @@ jobs:
           echo "TF_VAR_fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
           echo "TF_VAR_private_key_path=$HOME/.oci/oci_api_key.pem" >> $GITHUB_ENV
       
-      - name: 🔐 Configure AWS Credentials (State Backend)
+      - name: � Debug OCI Authentication
+        run: |
+          echo "===================================================="
+          echo "🔍 OCI AUTHENTICATION DEBUG"
+          echo "===================================================="
+          
+          # Check files exist
+          echo "📁 Checking OCI configuration files..."
+          ls -la ~/.oci/
+          
+          # Check key format (first and last lines)
+          echo ""
+          echo "🔑 Private key format check:"
+          echo "First line: $(head -1 ~/.oci/oci_api_key.pem)"
+          echo "Last line: $(tail -1 ~/.oci/oci_api_key.pem)"
+          echo "Line count: $(wc -l < ~/.oci/oci_api_key.pem)"
+          
+          # Verify key permissions
+          echo ""
+          echo "🔒 Key permissions:"
+          stat -f "%A" ~/.oci/oci_api_key.pem 2>/dev/null || stat -c "%a" ~/.oci/oci_api_key.pem
+          
+          # Calculate fingerprint from private key and compare
+          echo ""
+          echo "🔐 Fingerprint Verification:"
+          echo "Expected fingerprint (from secret): ${TF_VAR_fingerprint}"
+          
+          # Calculate actual fingerprint from the key
+          echo "Calculating fingerprint from private key..."
+          CALCULATED_FP=$(openssl rsa -pubout -outform DER -in ~/.oci/oci_api_key.pem 2>/dev/null | openssl md5 -c | awk '{print $2}')
+          echo "Calculated fingerprint: $CALCULATED_FP"
+          
+          if [ "$TF_VAR_fingerprint" = "$CALCULATED_FP" ]; then
+            echo "✅ Fingerprints MATCH!"
+          else
+            echo "❌ FINGERPRINT MISMATCH!"
+            echo "   This is why you're getting 401 errors!"
+            echo "   Your private key doesn't match the fingerprint in secrets."
+          fi
+          
+          # Check config content (masked)
+          echo ""
+          echo "⚙️ OCI Config (masked):"
+          echo "User OCID: ${TF_VAR_user_ocid:0:20}..."
+          echo "Tenancy OCID: ${TF_VAR_tenancy_ocid:0:20}..."
+          echo "Region: $TF_VAR_region"
+          echo "Fingerprint: ${TF_VAR_fingerprint:0:10}..."
+          
+          # Install OCI CLI for testing
+          echo ""
+          echo "📦 Installing OCI CLI for auth test..."
+          pip install -q oci-cli
+          
+          # Test OCI authentication
+          echo ""
+          echo "✅ Testing OCI authentication..."
+          if oci iam region list --config-file ~/.oci/config 2>&1 | grep -q "us-ashburn-1"; then
+            echo "✅ OCI authentication SUCCESSFUL!"
+          else
+            echo "❌ OCI authentication FAILED!"
+            echo ""
+            echo "Full error output:"
+            oci iam region list --config-file ~/.oci/config 2>&1 || true
+          fi
+          
+          echo "===================================================="
+      
+      - name: �🔐 Configure AWS Credentials (State Backend)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -257,16 +349,89 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
       
+      - name: 🔍 Detect Changed Files & Region (PR API)
+        id: detect-region
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let changedFiles = [];
+            
+            if (context.eventName === 'pull_request') {
+              // ✅ Use GitHub PR API - more reliable than git diff!
+              core.info('📋 Getting changed files from PR API...');
+              
+              const files = await github.rest.pulls.listFiles({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                per_page: 100
+              });
+              
+              changedFiles = files.data
+                .map(f => f.filename)
+                .filter(f => f.endsWith('.tfvars'));
+              
+              core.info(`✅ Found ${changedFiles.length} changed .tfvars files via PR API`);
+            }
+            
+            if (changedFiles.length === 0) {
+              core.setFailed('❌ No .tfvars files changed');
+              return;
+            }
+            
+            // Extract region from first changed file
+            const firstFile = changedFiles[0];
+            const region = firstFile.split('/')[0];
+            
+            core.info(`📍 Detected region: ${region}`);
+            core.info(`📁 Changed files: ${changedFiles.join(', ')}`);
+            
+            // Set outputs
+            core.setOutput('region', region);
+            core.setOutput('changed_files', changedFiles.join('\n'));
+            core.setOutput('file_count', changedFiles.length)
+      
       - name: 📋 Run Terraform Plan (v2 with dependencies)
         id: plan
         run: |
-          BASE_REF="${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD^' }}"
+          REGION_DIR="${{ steps.detect-region.outputs.region }}"
+          
+          # Map directory name to OCI region code
+          case "$REGION_DIR" in
+            toronto)
+              OCI_REGION="ca-toronto-1"
+              ;;
+            ashburn)
+              OCI_REGION="us-ashburn-1"
+              ;;
+            phoenix)
+              OCI_REGION="us-phoenix-1"
+              ;;
+            london)
+              OCI_REGION="uk-london-1"
+              ;;
+            frankfurt)
+              OCI_REGION="eu-frankfurt-1"
+              ;;
+            *)
+              # Default or use secrets
+              OCI_REGION="${{ secrets.OCI_REGION }}"
+              echo "⚠️  Unknown region directory: $REGION_DIR, using default: $OCI_REGION"
+              ;;
+          esac
+          
+          echo "🎯 Running Terraform Plan"
+          echo "   Directory: $REGION_DIR"
+          echo "   OCI Region: $OCI_REGION"
+          echo "   Changed files: ${{ steps.detect-region.outputs.file_count }}"
+          
+          # Save changed files for orchestrator
+          echo '${{ steps.detect-region.outputs.changed_files }}' > /tmp/changed-files.txt
           
           python3 scripts/oci-terraform-orchestrator-v2.py \
             --action plan \
-            --working-dir "${{ github.workspace }}/${{ env.WORKING_DIR }}" \
-            --base-ref "$BASE_REF" \
-            --region "${{ secrets.OCI_REGION }}" \
+            --working-dir "${{ github.workspace }}/${REGION_DIR}" \
+            --region "$OCI_REGION" \
             --parallel \
             --max-workers 3 \
             --debug
@@ -279,18 +444,20 @@ jobs:
           fi
       
       - name: 💬 Post Plan Results to PR
-        if: github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.auth.outputs.token }}
           script: |
             const fs = require('fs');
             
-            let comment = '';
+            let comment = '## 📋 Terraform Plan Results\n\n';
+            
             try {
-              comment = fs.readFileSync('terraform-results.md', 'utf8');
+              const results = fs.readFileSync('terraform-results.md', 'utf8');
+              comment += results;
             } catch (error) {
-              comment = `## ❌ Plan Failed\n\nFailed to generate plan. Check workflow logs.\n\nError: ${error.message}`;
+              comment += `## ❌ Plan Failed\n\nFailed to generate plan. Check workflow logs.\n\nError: ${error.message}`;
             }
             
             // Add v2 specific notes
@@ -355,32 +522,34 @@ jobs:
     name: 🚀 Terraform Apply (v2)
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'push' && 
-       (github.ref == 'refs/heads/Dev' || 
-        github.ref == 'refs/heads/Staging' || 
-        github.ref == 'refs/heads/Production')) ||
-      (github.event_name == 'workflow_dispatch' && inputs.action == 'apply')
-    
-    # Environment-based approval gates
-    environment:
-      name: ${{ (github.ref == 'refs/heads/Production' || inputs.environment == 'Production') && 'production' || (github.ref == 'refs/heads/Staging' || inputs.environment == 'Staging') && 'staging' || 'development' }}
+      github.event_name == 'pull_request' && 
+      github.event.action == 'closed' && 
+      github.event.pull_request.merged == true
     
     steps:
-      - name: 🚀 Apply Details
+      - name: � Generate GitHub App Token
+        id: auth
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GT_APP_ID }}
+          private-key: ${{ secrets.GT_APP_PRIVATE_KEY }}
+      
+      - name: �🚀 Apply Details
         run: |
           echo "════════════════════════════════════════════════════════════════"
           echo "🚀 TERRAFORM APPLY v2.0 - WITH DEPENDENCY ORDERING"
           echo "════════════════════════════════════════════════════════════════"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "Commit: ${{ github.sha }}"
-          echo "Actor: ${{ github.actor }}"
-          echo "Environment: ${{ github.ref == 'refs/heads/Production' && 'PRODUCTION' || github.ref == 'refs/heads/Staging' && 'STAGING' || 'DEVELOPMENT' }}"
-          echo "Parallel: ${{ inputs.parallel || 'true' }}"
+          echo "PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
+          echo "Base Branch: ${{ github.event.pull_request.base.ref }}"
+          echo "Merged By: @${{ github.event.pull_request.merged_by.login }}"
+          echo "Commit: ${{ github.event.pull_request.merge_commit_sha }}"
+          echo "Parallel: enabled"
           echo "════════════════════════════════════════════════════════════════"
       
       - name: 📥 Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
       
       - name: 🔐 Configure OCI CLI
@@ -403,7 +572,46 @@ jobs:
           echo "TF_VAR_fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
           echo "TF_VAR_private_key_path=$HOME/.oci/oci_api_key.pem" >> $GITHUB_ENV
       
-      - name: 🔐 Configure AWS Credentials
+      - name: � Debug OCI Authentication
+        run: |
+          echo "===================================================="
+          echo "🔍 OCI AUTHENTICATION DEBUG (APPLY)"
+          echo "===================================================="
+          
+          echo "📁 Checking OCI configuration files..."
+          ls -la ~/.oci/
+          
+          echo ""
+          echo "🔑 Private key format check:"
+          echo "First line: $(head -1 ~/.oci/oci_api_key.pem)"
+          echo "Last line: $(tail -1 ~/.oci/oci_api_key.pem)"
+          echo "Line count: $(wc -l < ~/.oci/oci_api_key.pem)"
+          
+          echo ""
+          echo "⚙️  OCI Config (masked):"
+          echo "User OCID: ${TF_VAR_user_ocid:0:20}..."
+          echo "Tenancy OCID: ${TF_VAR_tenancy_ocid:0:20}..."
+          echo "Region: $TF_VAR_region"
+          echo "Fingerprint: ${TF_VAR_fingerprint:0:10}..."
+          
+          echo ""
+          echo "📦 Installing OCI CLI for auth test..."
+          pip install -q oci-cli
+          
+          echo ""
+          echo "✅ Testing OCI authentication..."
+          if oci iam region list --config-file ~/.oci/config 2>&1 | grep -q "us-ashburn-1"; then
+            echo "✅ OCI authentication SUCCESSFUL!"
+          else
+            echo "❌ OCI authentication FAILED!"
+            echo ""
+            echo "Full error output:"
+            oci iam region list --config-file ~/.oci/config 2>&1 || true
+          fi
+          
+          echo "===================================================="
+      
+      - name: �🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -422,21 +630,148 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
       
+      - name: 🔍 Detect Changed Files & Region (Merge Commit)
+        id: detect-region
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let changedFiles = [];
+            
+            try {
+              // ✅ For merge commits, use GitHub API to get commit details
+              core.info('📋 Fetching merge commit details from GitHub API...');
+              
+              const commit = await github.rest.repos.getCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: context.sha
+              });
+              
+              // Get all changed files from the commit
+              changedFiles = commit.data.files
+                .map(f => f.filename)
+                .filter(f => f.endsWith('.tfvars'));
+              
+              core.info(`✅ Found ${changedFiles.length} changed .tfvars files from commit`);
+              
+            } catch (error) {
+              // Fallback to git diff if API fails
+              core.warning(`⚠️ GitHub API failed, falling back to git diff: ${error.message}`);
+              const { execSync } = require('child_process');
+              const output = execSync('git diff --name-only HEAD^ HEAD').toString();
+              changedFiles = output.split('\n').filter(f => f.endsWith('.tfvars'));
+            }
+            
+            if (changedFiles.length === 0) {
+              core.setFailed('❌ No .tfvars files changed in this merge');
+              return;
+            }
+            
+            // Extract region from first changed file
+            const firstFile = changedFiles[0];
+            const region = firstFile.split('/')[0];
+            
+            // Extract service names (2nd level directories)
+            const services = [...new Set(
+              changedFiles
+                .map(f => f.split('/')[1])
+                .filter(s => s)
+            )].join(', ');
+            
+            core.info(`📍 Detected region: ${region}`);
+            core.info(`🎯 Services: ${services}`);
+            core.info(`📁 Changed files (${changedFiles.length}): ${changedFiles.join(', ')}`);
+            
+            // Set outputs
+            core.setOutput('region', region);
+            core.setOutput('services', services);
+            core.setOutput('changed_files', changedFiles.join('\n'));
+            core.setOutput('file_count', changedFiles.length)
+      
       - name: 🚀 Run Terraform Apply (v2 with dependencies)
         id: apply
         run: |
-          PARALLEL_FLAG="${{ inputs.parallel == 'true' || github.event_name == 'push' && '--parallel' || '' }}"
+          PARALLEL_FLAG="--parallel"
+          REGION_DIR="${{ steps.detect-region.outputs.region }}"
+          
+          # Map directory name to OCI region code
+          case "$REGION_DIR" in
+            toronto)
+              OCI_REGION="ca-toronto-1"
+              ;;
+            ashburn)
+              OCI_REGION="us-ashburn-1"
+              ;;
+            phoenix)
+              OCI_REGION="us-phoenix-1"
+              ;;
+            london)
+              OCI_REGION="uk-london-1"
+              ;;
+            frankfurt)
+              OCI_REGION="eu-frankfurt-1"
+              ;;
+            *)
+              OCI_REGION="${{ secrets.OCI_REGION }}"
+              echo "⚠️  Unknown region directory: $REGION_DIR, using default: $OCI_REGION"
+              ;;
+          esac
+          
+          echo "🎯 Running Terraform Apply"
+          echo "   Directory: $REGION_DIR"
+          echo "   OCI Region: $OCI_REGION"
+          echo "   Services: ${{ steps.detect-region.outputs.services }}"
+          echo "   Changed files: ${{ steps.detect-region.outputs.file_count }}"
+          
+          # Save changed files for orchestrator
+          echo '${{ steps.detect-region.outputs.changed_files }}' > /tmp/changed-files.txt
           
           python3 scripts/oci-terraform-orchestrator-v2.py \
             --action apply \
-            --working-dir "${{ github.workspace }}/${{ env.WORKING_DIR }}" \
-            --base-ref "HEAD^" \
-            --region "${{ secrets.OCI_REGION }}" \
+            --working-dir "${{ github.workspace }}/${REGION_DIR}" \
+            --region "$OCI_REGION" \
             $PARALLEL_FLAG \
             --max-workers 3 \
             --debug
       
-      - name: 📤 Upload Apply Results
+      - name: � Post Apply Results to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.auth.outputs.token }}
+          script: |
+            const fs = require('fs');
+            const prNumber = context.payload.pull_request.number;
+            const success = '${{ steps.apply.outcome }}' === 'success';
+            
+            let comment = success 
+              ? '## ✅ Terraform Apply Completed Successfully\n\n'
+              : '## ❌ Terraform Apply Failed\n\n';
+            
+            comment += `**PR**: #${prNumber}\n`;
+            comment += `**Base Branch**: ${{ github.event.pull_request.base.ref }}\n`;
+            comment += `**Merged By**: @${{ github.event.pull_request.merged_by.login }}\n`;
+            comment += `**Commit**: \`${'${{ github.event.pull_request.merge_commit_sha }}'.substring(0, 7)}\`\n`;
+            comment += `**Region**: ${{ steps.detect-region.outputs.region }}\n`;
+            comment += `**Services**: ${{ steps.detect-region.outputs.services }}\n\n`;
+            
+            if (fs.existsSync('terraform-results.md')) {
+              const results = fs.readFileSync('terraform-results.md', 'utf8');
+              comment += '### 📊 Apply Results\n\n';
+              comment += results;
+            }
+            
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            comment += `\n\n---\n🔗 [View Workflow Run](${runUrl})`;
+            
+            await github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+      
+      - name: �📤 Upload Apply Results
         if: always()
         uses: actions/upload-artifact@v4
         with:

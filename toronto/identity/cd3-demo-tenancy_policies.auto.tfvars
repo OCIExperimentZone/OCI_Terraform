@@ -19,3 +19,6 @@ policies = {
         policy_statements = [ "allow group demo-group to read all-resources in tenancy"  ]
             },
  }
+
+# Test workflow trigger - Wed Dec 17 16:59:31 EST 2025
+

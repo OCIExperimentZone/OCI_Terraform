@@ -150,24 +150,33 @@ def topological_sort(services: List[str]) -> List[List[str]]:
 # MODULE CHANGE DETECTION
 # =============================================================================
 
-def detect_module_changes(base_ref: str) -> Set[str]:
+def detect_module_changes(base_ref: str = None, changed_files: List[str] = None) -> Set[str]:
     """
     Detect if any modules were changed.
     Returns set of changed module names.
+    
+    Args:
+        base_ref: Git reference for diff (optional if changed_files provided)
+        changed_files: List of changed file paths (preferred)
     """
     try:
-        repo = git.Repo(os.getcwd())
-        
-        # Get changed files
-        if base_ref == 'HEAD':
-            diff = repo.head.commit.diff('HEAD~1')
+        # Use provided file list or fall back to git diff
+        file_paths = []
+        if changed_files:
+            file_paths = changed_files
+            debug_print(f"📦 Checking module changes from provided file list")
+        elif base_ref:
+            repo = git.Repo(os.getcwd())
+            if base_ref == 'HEAD':
+                diff = repo.head.commit.diff('HEAD~1')
+            else:
+                diff = repo.head.commit.diff(base_ref)
+            file_paths = [item.a_path for item in diff]
         else:
-            diff = repo.head.commit.diff(base_ref)
-        
-        changed_files = [item.a_path for item in diff]
+            return set()
         
         modules = set()
-        for file_path in changed_files:
+        for file_path in file_paths:
             if file_path.startswith('modules/'):
                 parts = file_path.split('/')
                 if len(parts) >= 2:
@@ -217,22 +226,40 @@ def get_services_using_modules(working_dir: str, modules: Set[str]) -> Set[str]:
 # GIT CHANGE DETECTION
 # =============================================================================
 
-def detect_changed_services(working_dir: str, base_ref: str) -> List[str]:
+def detect_changed_services(working_dir: str, base_ref: str = None, changed_files_path: str = None) -> List[str]:
     """
     Detect which services have changes.
     Enhanced to include services affected by module changes.
+    
+    Args:
+        working_dir: The working directory to scan
+        base_ref: Git reference for diff (optional if changed_files_path provided)
+        changed_files_path: Path to file containing list of changed files (preferred)
     """
     try:
-        repo = git.Repo(os.getcwd())
         working_dir_name = Path(working_dir).name
         
-        # Get changed files
-        if base_ref == 'HEAD':
-            diff = repo.head.commit.diff('HEAD~1')
-        else:
-            diff = repo.head.commit.diff(base_ref)
+        # Try to read changed files from external file first (provided by GitHub API)
+        changed_files = []
+        if changed_files_path and os.path.exists(changed_files_path):
+            debug_print(f"📋 Reading changed files from: {changed_files_path}")
+            with open(changed_files_path, 'r') as f:
+                changed_files = [line.strip() for line in f if line.strip()]
+            debug_print(f"✅ Loaded {len(changed_files)} files from external list")
         
-        changed_files = [item.a_path for item in diff]
+        # Fallback to git diff if no external file provided
+        if not changed_files:
+            if not base_ref:
+                raise ValueError("Either changed_files_path or base_ref must be provided")
+            
+            debug_print(f"🔍 Using git diff with base_ref: {base_ref}")
+            repo = git.Repo(os.getcwd())
+            if base_ref == 'HEAD':
+                diff = repo.head.commit.diff('HEAD~1')
+            else:
+                diff = repo.head.commit.diff(base_ref)
+            
+            changed_files = [item.a_path for item in diff]
         debug_print(f"Changed files: {changed_files}")
         
         services = set()
@@ -251,7 +278,7 @@ def detect_changed_services(working_dir: str, base_ref: str) -> List[str]:
                         debug_print(f"Direct change in service: {service_name}")
         
         # 2. Detect module changes and affected services
-        changed_modules = detect_module_changes(base_ref)
+        changed_modules = detect_module_changes(base_ref=base_ref, changed_files=changed_files)
         if changed_modules:
             print(f"📦 Detected module changes: {', '.join(sorted(changed_modules))}")
             affected_services = get_services_using_modules(working_dir, changed_modules)
@@ -338,6 +365,32 @@ def execute_terraform_for_service(
         print(f"🚀 Processing: {service_name} (action: {action})")
         print(f"{'='*80}")
         
+        # Set region from parameter (overrides any previous value)
+        os.environ['TF_VAR_region'] = region
+        print(f"✅ Set TF_VAR_region = {region}")
+        
+        # Debug: Show OCI credentials being used
+        print(f"\n🔍 OCI Credentials Check:")
+        print(f"  TF_VAR_tenancy_ocid: {os.environ.get('TF_VAR_tenancy_ocid', 'NOT SET')[:30]}...")
+        print(f"  TF_VAR_user_ocid: {os.environ.get('TF_VAR_user_ocid', 'NOT SET')[:30]}...")
+        print(f"  TF_VAR_region: {os.environ.get('TF_VAR_region', 'NOT SET')}")
+        print(f"  TF_VAR_fingerprint: {os.environ.get('TF_VAR_fingerprint', 'NOT SET')[:15]}...")
+        print(f"  TF_VAR_private_key_path: {os.environ.get('TF_VAR_private_key_path', 'NOT SET')}")
+        
+        # Check if private key file exists
+        key_path = os.environ.get('TF_VAR_private_key_path')
+        if key_path and os.path.exists(key_path):
+            print(f"  ✅ Private key file exists: {key_path}")
+            # Check first/last line
+            with open(key_path, 'r') as f:
+                lines = f.readlines()
+                print(f"     First line: {lines[0].strip()}")
+                print(f"     Last line: {lines[-1].strip()}")
+                print(f"     Line count: {len(lines)}")
+        else:
+            print(f"  ❌ Private key file NOT FOUND: {key_path}")
+        print()
+        
         # Step 1: Terraform init
         print(f"  → Running terraform init...")
         init_cmd = ['terraform', 'init', '-no-color']
@@ -353,13 +406,24 @@ def execute_terraform_for_service(
             result['error'] = f"Init failed: {init_result.stderr}"
             result['output'] = init_result.stdout + init_result.stderr
             print(f"❌ Terraform init failed for {service_name}")
+            print(f"\n{'='*80}")
+            print(f"INIT STDOUT:")
+            print(f"{'='*80}")
+            print(init_result.stdout)
+            print(f"\n{'='*80}")
+            print(f"INIT STDERR:")
+            print(f"{'='*80}")
+            print(init_result.stderr)
+            print(f"{'='*80}\n")
             return result
         
         # Step 2: Terraform plan or apply
         print(f"  → Running terraform {action}...")
         
+        # Add -refresh=false to prevent 401 errors when state contains old tenancy resources
         if action == 'plan':
-            tf_cmd = ['terraform', 'plan', '-no-color', '-detailed-exitcode']
+            tf_cmd = ['terraform', 'plan', '-no-color', '-detailed-exitcode', '-refresh=false']
+            print(f"  ℹ️  Using -refresh=false to skip state refresh (avoids 401 errors)")
         else:
             tf_cmd = ['terraform', 'apply', '-auto-approve', '-no-color']
         
@@ -385,9 +449,18 @@ def execute_terraform_for_service(
                 result['success'] = True
                 print(f"✅ Plan complete for {service_name}")
             else:
-                result['error'] = f"Plan failed: {tf_result.stderr}"
+                result['error'] = f"Plan failed (exit code {tf_result.returncode}): {tf_result.stderr}"
                 result['output'] += f"\n\nSTDERR:\n{tf_result.stderr}"
                 print(f"❌ Plan failed for {service_name}")
+                print(f"\n{'='*80}")
+                print(f"PLAN STDOUT:")
+                print(f"{'='*80}")
+                print(tf_result.stdout)
+                print(f"\n{'='*80}")
+                print(f"PLAN STDERR:")
+                print(f"{'='*80}")
+                print(tf_result.stderr)
+                print(f"{'='*80}\n")
         else:
             apply_summary = parse_apply_summary(tf_result.stdout)
             result['resources_created'] = apply_summary['add']
@@ -398,9 +471,18 @@ def execute_terraform_for_service(
                 result['success'] = True
                 print(f"✅ Apply complete for {service_name}")
             else:
-                result['error'] = f"Apply failed: {tf_result.stderr}"
+                result['error'] = f"Apply failed (exit code {tf_result.returncode}): {tf_result.stderr}"
                 result['output'] += f"\n\nSTDERR:\n{tf_result.stderr}"
                 print(f"❌ Apply failed for {service_name}")
+                print(f"\n{'='*80}")
+                print(f"APPLY STDOUT:")
+                print(f"{'='*80}")
+                print(tf_result.stdout)
+                print(f"\n{'='*80}")
+                print(f"APPLY STDERR:")
+                print(f"{'='*80}")
+                print(tf_result.stderr)
+                print(f"{'='*80}\n")
         
     except subprocess.TimeoutExpired:
         result['error'] = f"Terraform {action} timed out after 30 minutes"
@@ -686,8 +768,14 @@ Examples:
     
     parser.add_argument(
         '--base-ref',
-        default=os.environ.get('GITHUB_BASE_REF', 'main'),
-        help='Base git reference for change detection'
+        default=None,
+        help='Base git reference for change detection (optional if changed files provided)'
+    )
+    
+    parser.add_argument(
+        '--changed-files',
+        default='/tmp/changed-files.txt',
+        help='Path to file containing list of changed files (from GitHub API)'
     )
     
     parser.add_argument(
@@ -779,7 +867,11 @@ Max Workers:   {args.max_workers if args.parallel else 'N/A'}
     
     # Detect changed services
     print("🔍 Detecting changed services...")
-    changed_services = detect_changed_services(args.working_dir, args.base_ref)
+    changed_services = detect_changed_services(
+        args.working_dir, 
+        base_ref=args.base_ref,
+        changed_files_path=args.changed_files
+    )
     
     if not changed_services:
         print("✅ No service changes detected")

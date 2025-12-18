@@ -1,0 +1,57 @@
+# =============================================================================
+# OCI TERRAFORM CALLER WORKFLOW
+# =============================================================================
+# This workflow calls the reusable workflow from main branch
+# Minimal configuration - all logic is in the reusable workflow
+# =============================================================================
+
+name: 🎯 OCI Terraform
+
+run-name: "🚀 OCI Terraform: ${{ github.ref_name }} → ${{ github.base_ref || vars.BASE_BRANCH || 'Dev' }} [@${{ github.actor }}]"
+
+on:
+  # Any branch pushes with tfvars changes (any directory)
+  push:
+    paths:
+      - '**/*.tfvars'
+  
+  # PR events
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      working_dir:
+        description: 'Working directory (e.g., toronto, staging)'
+        required: false
+        type: string
+      parallel:
+        description: 'Enable parallel execution'
+        required: false
+        type: boolean
+        default: true
+      base_branch:
+        description: 'Base branch for PR'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+  actions: write
+
+jobs:
+  call-reusable-workflow:
+    name: 📞 Call Reusable Workflow
+    uses: OCIExperimentZone/OCI_Terraform/.github/workflows/oci-terraform-reusable.yml@main
+    with:
+      working_dir: ${{ inputs.working_dir || vars.WORKING_DIR }}
+      terraform_version: ${{ vars.TERRAFORM_VERSION }}
+      python_version: ${{ vars.PYTHON_VERSION }}
+      parallel: ${{ inputs.parallel || true }}
+      max_workers: ${{ vars.MAX_WORKERS }}
+      base_branch: ${{ github.base_ref || inputs.base_branch || vars.BASE_BRANCH }}
+    secrets: inherit
