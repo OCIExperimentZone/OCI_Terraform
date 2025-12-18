@@ -274,38 +274,68 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
       
-      - name: � Detect Region for Plan
+      - name: 🔍 Detect Changed Files & Region (PR API)
         id: detect-region
-        run: |
-          set -euo pipefail
-          
-          BASE_REF="${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD^' }}"
-          
-          # Dynamically detect which region has changes
-          changed_files=$(git diff --name-only $BASE_REF HEAD | grep '\.tfvars$' || true)
-          
-          if [[ -z "$changed_files" ]]; then
-            echo "❌ No .tfvars files changed"
-            exit 1
-          fi
-          
-          # Extract region from first changed file (e.g., toronto/identity/test.tfvars → toronto)
-          first_file=$(echo "$changed_files" | head -1)
-          REGION=$(echo "$first_file" | cut -d'/' -f1)
-          
-          echo "region=$REGION" >> $GITHUB_OUTPUT
-          echo "📍 Detected region for plan: $REGION"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let changedFiles = [];
+            
+            if (context.eventName === 'pull_request') {
+              // ✅ Use GitHub PR API - more reliable than git diff!
+              core.info('📋 Getting changed files from PR API...');
+              
+              const files = await github.rest.pulls.listFiles({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                per_page: 100
+              });
+              
+              changedFiles = files.data
+                .map(f => f.filename)
+                .filter(f => f.endsWith('.tfvars'));
+              
+              core.info(`✅ Found ${changedFiles.length} changed .tfvars files via PR API`);
+            } else {
+              // Fallback to git diff for workflow_dispatch
+              core.info('🔍 Using git diff for non-PR event...');
+              const { execSync } = require('child_process');
+              const output = execSync('git diff --name-only HEAD^ HEAD').toString();
+              changedFiles = output.split('\n').filter(f => f.endsWith('.tfvars'));
+            }
+            
+            if (changedFiles.length === 0) {
+              core.setFailed('❌ No .tfvars files changed');
+              return;
+            }
+            
+            // Extract region from first changed file
+            const firstFile = changedFiles[0];
+            const region = firstFile.split('/')[0];
+            
+            core.info(`📍 Detected region: ${region}`);
+            core.info(`📁 Changed files: ${changedFiles.join(', ')}`);
+            
+            // Set outputs
+            core.setOutput('region', region);
+            core.setOutput('changed_files', changedFiles.join('\n'));
+            core.setOutput('file_count', changedFiles.length)
       
       - name: 📋 Run Terraform Plan (v2 with dependencies)
         id: plan
         run: |
-          BASE_REF="${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD^' }}"
           REGION="${{ steps.detect-region.outputs.region }}"
+          
+          echo "🎯 Running Terraform Plan for region: $REGION"
+          echo "📊 Changed files count: ${{ steps.detect-region.outputs.file_count }}"
+          
+          # Save changed files for orchestrator (if it needs them)
+          echo '${{ steps.detect-region.outputs.changed_files }}' > /tmp/changed-files.txt
           
           python3 scripts/oci-terraform-orchestrator-v2.py \
             --action plan \
             --working-dir "${{ github.workspace }}/${REGION}" \
-            --base-ref "$BASE_REF" \
             --region "${{ secrets.OCI_REGION }}" \
             --parallel \
             --max-workers 3 \
