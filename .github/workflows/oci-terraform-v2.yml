@@ -255,7 +255,56 @@ jobs:
           echo "TF_VAR_fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
           echo "TF_VAR_private_key_path=$HOME/.oci/oci_api_key.pem" >> $GITHUB_ENV
       
-      - name: 🔐 Configure AWS Credentials (State Backend)
+      - name: � Debug OCI Authentication
+        run: |
+          echo "===================================================="
+          echo "🔍 OCI AUTHENTICATION DEBUG"
+          echo "===================================================="
+          
+          # Check files exist
+          echo "📁 Checking OCI configuration files..."
+          ls -la ~/.oci/
+          
+          # Check key format (first and last lines)
+          echo ""
+          echo "🔑 Private key format check:"
+          echo "First line: $(head -1 ~/.oci/oci_api_key.pem)"
+          echo "Last line: $(tail -1 ~/.oci/oci_api_key.pem)"
+          echo "Line count: $(wc -l < ~/.oci/oci_api_key.pem)"
+          
+          # Verify key permissions
+          echo ""
+          echo "🔒 Key permissions:"
+          stat -f "%A" ~/.oci/oci_api_key.pem 2>/dev/null || stat -c "%a" ~/.oci/oci_api_key.pem
+          
+          # Check config content (masked)
+          echo ""
+          echo "⚙️ OCI Config (masked):"
+          echo "User OCID: ${TF_VAR_user_ocid:0:20}..."
+          echo "Tenancy OCID: ${TF_VAR_tenancy_ocid:0:20}..."
+          echo "Region: $TF_VAR_region"
+          echo "Fingerprint: ${TF_VAR_fingerprint:0:10}..."
+          
+          # Install OCI CLI for testing
+          echo ""
+          echo "📦 Installing OCI CLI for auth test..."
+          pip install -q oci-cli
+          
+          # Test OCI authentication
+          echo ""
+          echo "✅ Testing OCI authentication..."
+          if oci iam region list --config-file ~/.oci/config 2>&1 | grep -q "us-ashburn-1"; then
+            echo "✅ OCI authentication SUCCESSFUL!"
+          else
+            echo "❌ OCI authentication FAILED!"
+            echo ""
+            echo "Full error output:"
+            oci iam region list --config-file ~/.oci/config 2>&1 || true
+          fi
+          
+          echo "===================================================="
+      
+      - name: �🔐 Configure AWS Credentials (State Backend)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
@@ -473,7 +522,46 @@ jobs:
           echo "TF_VAR_fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> $GITHUB_ENV
           echo "TF_VAR_private_key_path=$HOME/.oci/oci_api_key.pem" >> $GITHUB_ENV
       
-      - name: 🔐 Configure AWS Credentials
+      - name: � Debug OCI Authentication
+        run: |
+          echo "===================================================="
+          echo "🔍 OCI AUTHENTICATION DEBUG (APPLY)"
+          echo "===================================================="
+          
+          echo "📁 Checking OCI configuration files..."
+          ls -la ~/.oci/
+          
+          echo ""
+          echo "🔑 Private key format check:"
+          echo "First line: $(head -1 ~/.oci/oci_api_key.pem)"
+          echo "Last line: $(tail -1 ~/.oci/oci_api_key.pem)"
+          echo "Line count: $(wc -l < ~/.oci/oci_api_key.pem)"
+          
+          echo ""
+          echo "⚙️  OCI Config (masked):"
+          echo "User OCID: ${TF_VAR_user_ocid:0:20}..."
+          echo "Tenancy OCID: ${TF_VAR_tenancy_ocid:0:20}..."
+          echo "Region: $TF_VAR_region"
+          echo "Fingerprint: ${TF_VAR_fingerprint:0:10}..."
+          
+          echo ""
+          echo "📦 Installing OCI CLI for auth test..."
+          pip install -q oci-cli
+          
+          echo ""
+          echo "✅ Testing OCI authentication..."
+          if oci iam region list --config-file ~/.oci/config 2>&1 | grep -q "us-ashburn-1"; then
+            echo "✅ OCI authentication SUCCESSFUL!"
+          else
+            echo "❌ OCI authentication FAILED!"
+            echo ""
+            echo "Full error output:"
+            oci iam region list --config-file ~/.oci/config 2>&1 || true
+          fi
+          
+          echo "===================================================="
+      
+      - name: �🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
