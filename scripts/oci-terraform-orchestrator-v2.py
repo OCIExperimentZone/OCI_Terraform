@@ -380,6 +380,15 @@ def execute_terraform_for_service(
             result['error'] = f"Init failed: {init_result.stderr}"
             result['output'] = init_result.stdout + init_result.stderr
             print(f"❌ Terraform init failed for {service_name}")
+            print(f"\n{'='*80}")
+            print(f"INIT STDOUT:")
+            print(f"{'='*80}")
+            print(init_result.stdout)
+            print(f"\n{'='*80}")
+            print(f"INIT STDERR:")
+            print(f"{'='*80}")
+            print(init_result.stderr)
+            print(f"{'='*80}\n")
             return result
         
         # Step 2: Terraform plan or apply
@@ -412,9 +421,18 @@ def execute_terraform_for_service(
                 result['success'] = True
                 print(f"✅ Plan complete for {service_name}")
             else:
-                result['error'] = f"Plan failed: {tf_result.stderr}"
+                result['error'] = f"Plan failed (exit code {tf_result.returncode}): {tf_result.stderr}"
                 result['output'] += f"\n\nSTDERR:\n{tf_result.stderr}"
                 print(f"❌ Plan failed for {service_name}")
+                print(f"\n{'='*80}")
+                print(f"PLAN STDOUT:")
+                print(f"{'='*80}")
+                print(tf_result.stdout)
+                print(f"\n{'='*80}")
+                print(f"PLAN STDERR:")
+                print(f"{'='*80}")
+                print(tf_result.stderr)
+                print(f"{'='*80}\n")
         else:
             apply_summary = parse_apply_summary(tf_result.stdout)
             result['resources_created'] = apply_summary['add']
@@ -425,9 +443,18 @@ def execute_terraform_for_service(
                 result['success'] = True
                 print(f"✅ Apply complete for {service_name}")
             else:
-                result['error'] = f"Apply failed: {tf_result.stderr}"
+                result['error'] = f"Apply failed (exit code {tf_result.returncode}): {tf_result.stderr}"
                 result['output'] += f"\n\nSTDERR:\n{tf_result.stderr}"
                 print(f"❌ Apply failed for {service_name}")
+                print(f"\n{'='*80}")
+                print(f"APPLY STDOUT:")
+                print(f"{'='*80}")
+                print(tf_result.stdout)
+                print(f"\n{'='*80}")
+                print(f"APPLY STDERR:")
+                print(f"{'='*80}")
+                print(tf_result.stderr)
+                print(f"{'='*80}\n")
         
     except subprocess.TimeoutExpired:
         result['error'] = f"Terraform {action} timed out after 30 minutes"
