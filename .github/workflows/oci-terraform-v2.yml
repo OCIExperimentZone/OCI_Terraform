@@ -492,25 +492,63 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
       
-      - name: � Detect Region for Apply
+      - name: 🔍 Detect Changed Files & Region (Merge Commit)
         id: detect-region
-        run: |
-          set -euo pipefail
-          
-          # Dynamically detect which region has changes
-          changed_files=$(git diff --name-only HEAD^ HEAD | grep '\.tfvars$' || true)
-          
-          if [[ -z "$changed_files" ]]; then
-            echo "❌ No .tfvars files changed"
-            exit 1
-          fi
-          
-          # Extract region from first changed file
-          first_file=$(echo "$changed_files" | head -1)
-          REGION=$(echo "$first_file" | cut -d'/' -f1)
-          
-          echo "region=$REGION" >> $GITHUB_OUTPUT
-          echo "📍 Detected region for apply: $REGION"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let changedFiles = [];
+            
+            try {
+              // ✅ For merge commits, use GitHub API to get commit details
+              core.info('📋 Fetching merge commit details from GitHub API...');
+              
+              const commit = await github.rest.repos.getCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: context.sha
+              });
+              
+              // Get all changed files from the commit
+              changedFiles = commit.data.files
+                .map(f => f.filename)
+                .filter(f => f.endsWith('.tfvars'));
+              
+              core.info(`✅ Found ${changedFiles.length} changed .tfvars files from commit`);
+              
+            } catch (error) {
+              // Fallback to git diff if API fails
+              core.warning(`⚠️ GitHub API failed, falling back to git diff: ${error.message}`);
+              const { execSync } = require('child_process');
+              const output = execSync('git diff --name-only HEAD^ HEAD').toString();
+              changedFiles = output.split('\n').filter(f => f.endsWith('.tfvars'));
+            }
+            
+            if (changedFiles.length === 0) {
+              core.setFailed('❌ No .tfvars files changed in this merge');
+              return;
+            }
+            
+            // Extract region from first changed file
+            const firstFile = changedFiles[0];
+            const region = firstFile.split('/')[0];
+            
+            // Extract service names (2nd level directories)
+            const services = [...new Set(
+              changedFiles
+                .map(f => f.split('/')[1])
+                .filter(s => s)
+            )].join(', ');
+            
+            core.info(`📍 Detected region: ${region}`);
+            core.info(`🎯 Services: ${services}`);
+            core.info(`📁 Changed files (${changedFiles.length}): ${changedFiles.join(', ')}`);
+            
+            // Set outputs
+            core.setOutput('region', region);
+            core.setOutput('services', services);
+            core.setOutput('changed_files', changedFiles.join('\n'));
+            core.setOutput('file_count', changedFiles.length)
       
       - name: 🚀 Run Terraform Apply (v2 with dependencies)
         id: apply
@@ -518,10 +556,16 @@ jobs:
           PARALLEL_FLAG="${{ inputs.parallel == 'true' || github.event_name == 'push' && '--parallel' || '' }}"
           REGION="${{ steps.detect-region.outputs.region }}"
           
+          echo "🎯 Running Terraform Apply for region: $REGION"
+          echo "🔧 Services: ${{ steps.detect-region.outputs.services }}"
+          echo "📊 Changed files count: ${{ steps.detect-region.outputs.file_count }}"
+          
+          # Save changed files for orchestrator (if it needs them)
+          echo '${{ steps.detect-region.outputs.changed_files }}' > /tmp/changed-files.txt
+          
           python3 scripts/oci-terraform-orchestrator-v2.py \
             --action apply \
             --working-dir "${{ github.workspace }}/${REGION}" \
-            --base-ref "HEAD^" \
             --region "${{ secrets.OCI_REGION }}" \
             $PARALLEL_FLAG \
             --max-workers 3 \
