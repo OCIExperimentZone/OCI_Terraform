@@ -365,6 +365,10 @@ def execute_terraform_for_service(
         print(f"🚀 Processing: {service_name} (action: {action})")
         print(f"{'='*80}")
         
+        # Set region from parameter (overrides any previous value)
+        os.environ['TF_VAR_region'] = region
+        print(f"✅ Set TF_VAR_region = {region}")
+        
         # Debug: Show OCI credentials being used
         print(f"\n🔍 OCI Credentials Check:")
         print(f"  TF_VAR_tenancy_ocid: {os.environ.get('TF_VAR_tenancy_ocid', 'NOT SET')[:30]}...")
@@ -416,8 +420,10 @@ def execute_terraform_for_service(
         # Step 2: Terraform plan or apply
         print(f"  → Running terraform {action}...")
         
+        # Add -refresh=false to prevent 401 errors when state contains old tenancy resources
         if action == 'plan':
-            tf_cmd = ['terraform', 'plan', '-no-color', '-detailed-exitcode']
+            tf_cmd = ['terraform', 'plan', '-no-color', '-detailed-exitcode', '-refresh=false']
+            print(f"  ℹ️  Using -refresh=false to skip state refresh (avoids 401 errors)")
         else:
             tf_cmd = ['terraform', 'apply', '-auto-approve', '-no-color']
         
