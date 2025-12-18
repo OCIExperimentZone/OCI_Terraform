@@ -13,7 +13,7 @@
 
 name: 🎯 OCI Terraform Controller v2.0
 
-run-name: "🚀 OCI Terraform: ${{ github.ref_name }} → ${{ github.base_ref || 'Dev' }} [@${{ github.actor }}]"
+run-name: "${{ github.event.pull_request.number && format('PR #{0}', github.event.pull_request.number) || github.ref_name }}"
 
 on:
   push:
