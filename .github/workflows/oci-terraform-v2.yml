@@ -124,57 +124,58 @@ jobs:
           echo "   Files: ${{ steps.detect.outputs.file_count }}"
           echo "======================================================"
           
-          # Check if PR already exists for this branch → target combination
+          # Get values
+          SERVICES="${{ steps.detect.outputs.services }}"
+          FILE_COUNT="${{ steps.detect.outputs.file_count }}"
+          REGION="${{ steps.detect.outputs.region }}"
+          
+          # Check if PR already exists
           existing_pr=$(gh pr list --head "${current_branch}" --base "${target_branch}" --state open --json number --jq '.[0].number // ""')
           
           if [[ -n "$existing_pr" ]]; then
-            echo "ℹ️  PR #${existing_pr} already exists (${current_branch} → ${target_branch})"
-            gh pr view "${existing_pr}"
+            echo "ℹ️  PR #${existing_pr} exists - updating"
+            echo "## 🔧 OCI Terraform Update" > /tmp/pr.md
+            echo "" >> /tmp/pr.md
+            echo "**Region:** \`${REGION}\` | **Services:** \`${SERVICES}\` | **Files:** ${FILE_COUNT}" >> /tmp/pr.md
+            echo "" >> /tmp/pr.md
+            echo "**Changed Files:**" >> /tmp/pr.md
+            echo '${{ steps.detect.outputs.changed_files }}' >> /tmp/pr.md
+            echo "" >> /tmp/pr.md
+            echo "---" >> /tmp/pr.md
+            echo "*Updated: $(date -u '+%Y-%m-%d %H:%M UTC')*" >> /tmp/pr.md
+            
+            gh pr edit "${existing_pr}" --body "$(cat /tmp/pr.md)"
+            echo "✅ PR #${existing_pr} updated"
             exit 0
           fi
           
-          echo "🔄 Creating new Pull Request..."
-          
-          SERVICES="${{ steps.detect.outputs.services }}"
-          FILE_COUNT="${{ steps.detect.outputs.file_count }}"
-          
-          # Get dynamically detected region
-          REGION="${{ steps.detect.outputs.region }}"
+          echo "📝 Creating new PR..."
           
           # Build PR body
-          cat > /tmp/pr_body.md << EOF
-          ## 🔧 OCI Terraform Configuration Update (v2.0)
+          echo "## 🔧 OCI Terraform Update" > /tmp/pr.md
+          echo "" >> /tmp/pr.md
+          echo "**Region:** \`${REGION}\` | **Services:** \`${SERVICES}\` | **Files:** ${FILE_COUNT}" >> /tmp/pr.md
+          echo "" >> /tmp/pr.md
+          echo "**Changed Files:**" >> /tmp/pr.md
+          echo '${{ steps.detect.outputs.changed_files }}' >> /tmp/pr.md
+          echo "" >> /tmp/pr.md
+          echo "**Workflow:** Plan → Review → Approve → Merge → Apply" >> /tmp/pr.md
+          echo "" >> /tmp/pr.md
+          echo "---" >> /tmp/pr.md
+          echo "*Created: $(date -u '+%Y-%m-%d %H:%M UTC')*" >> /tmp/pr.md
           
-          **📊 Summary:**
-          - Region: \`${REGION}\`
-          - Services: \`${SERVICES}\`
-          - Environment: \`Dev\`
-          - Changed files: ${FILE_COUNT}
-          - Source Branch: \`${current_branch}\`
-          
-          **📁 Changed Files:**
-          ${{ steps.detect.outputs.changed_files }}
-          
-          **🔄 Automated Workflow:**
-          1. ✅ Terraform plan with dependency ordering
-          2. 📋 Review plan results (auto-posted below)
-          3. 👀 Human review & approval required
-          4. 🚀 Merge to trigger terraform apply
-          5. 🎯 Apply with dependency-aware execution
-          
-          ---
-          *🤖 Auto-generated PR - Powered by OCI Terraform Orchestrator v2.0*
-          EOF
-          
-          # Create PR with region in title
-          gh pr create \
-            --title "🔧 OCI Terraform: ${REGION}/${SERVICES} [Dev]" \
-            --body "$(cat /tmp/pr_body.md)" \
+          # Create PR
+          if gh pr create \
+            --title "🔧 OCI: ${REGION}/${SERVICES} [Dev]" \
+            --body "$(cat /tmp/pr.md)" \
             --head "${current_branch}" \
-            --base "${target_branch}"
-          
-          echo "✅ PR created successfully targeting ${target_branch}"
-          gh pr list --head "${current_branch}" --base "${target_branch}" --state open
+            --base "${target_branch}"; then
+            echo "✅ PR created"
+            gh pr list --head "${current_branch}" --state open
+          else
+            echo "❌ PR creation failed"
+            exit 1
+          fi
       
       - name: 💬 Post Initial PR Comment
         if: steps.detect.outputs.has_changes == 'true'
