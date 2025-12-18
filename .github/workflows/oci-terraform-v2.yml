@@ -221,7 +221,14 @@ jobs:
       plan_summary: ${{ steps.plan.outputs.summary }}
     
     steps:
-      - name: 📋 PR Details
+      - name: � Generate GitHub App Token
+        id: auth
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GT_APP_ID }}
+          private-key: ${{ secrets.GT_APP_PRIVATE_KEY }}
+      
+      - name: �📋 PR Details
         run: |
           echo "════════════════════════════════════════════════════════════════"
           echo "🔍 TERRAFORM PLAN v2.0 - WITH DEPENDENCY ORDERING"
@@ -440,7 +447,7 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GT_APP_PRIVATE_KEY && secrets.GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.auth.outputs.token }}
           script: |
             const fs = require('fs');
             
@@ -518,7 +525,14 @@ jobs:
       github.event.pull_request.merged == true
     
     steps:
-      - name: 🚀 Apply Details
+      - name: � Generate GitHub App Token
+        id: auth
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GT_APP_ID }}
+          private-key: ${{ secrets.GT_APP_PRIVATE_KEY }}
+      
+      - name: �🚀 Apply Details
         run: |
           echo "════════════════════════════════════════════════════════════════"
           echo "🚀 TERRAFORM APPLY v2.0 - WITH DEPENDENCY ORDERING"
@@ -722,7 +736,7 @@ jobs:
         if: always()
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ steps.auth.outputs.token }}
           script: |
             const fs = require('fs');
             const prNumber = context.payload.pull_request.number;
@@ -735,7 +749,7 @@ jobs:
             comment += `**PR**: #${prNumber}\n`;
             comment += `**Base Branch**: ${{ github.event.pull_request.base.ref }}\n`;
             comment += `**Merged By**: @${{ github.event.pull_request.merged_by.login }}\n`;
-            comment += `**Commit**: \`${{ github.event.pull_request.merge_commit_sha }}\`.substring(0, 7)\n`;
+            comment += `**Commit**: \`${'${{ github.event.pull_request.merge_commit_sha }}'.substring(0, 7)}\`\n`;
             comment += `**Region**: ${{ steps.detect-region.outputs.region }}\n`;
             comment += `**Services**: ${{ steps.detect-region.outputs.services }}\n\n`;
             
