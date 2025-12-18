@@ -365,6 +365,28 @@ def execute_terraform_for_service(
         print(f"🚀 Processing: {service_name} (action: {action})")
         print(f"{'='*80}")
         
+        # Debug: Show OCI credentials being used
+        print(f"\n🔍 OCI Credentials Check:")
+        print(f"  TF_VAR_tenancy_ocid: {os.environ.get('TF_VAR_tenancy_ocid', 'NOT SET')[:30]}...")
+        print(f"  TF_VAR_user_ocid: {os.environ.get('TF_VAR_user_ocid', 'NOT SET')[:30]}...")
+        print(f"  TF_VAR_region: {os.environ.get('TF_VAR_region', 'NOT SET')}")
+        print(f"  TF_VAR_fingerprint: {os.environ.get('TF_VAR_fingerprint', 'NOT SET')[:15]}...")
+        print(f"  TF_VAR_private_key_path: {os.environ.get('TF_VAR_private_key_path', 'NOT SET')}")
+        
+        # Check if private key file exists
+        key_path = os.environ.get('TF_VAR_private_key_path')
+        if key_path and os.path.exists(key_path):
+            print(f"  ✅ Private key file exists: {key_path}")
+            # Check first/last line
+            with open(key_path, 'r') as f:
+                lines = f.readlines()
+                print(f"     First line: {lines[0].strip()}")
+                print(f"     Last line: {lines[-1].strip()}")
+                print(f"     Line count: {len(lines)}")
+        else:
+            print(f"  ❌ Private key file NOT FOUND: {key_path}")
+        print()
+        
         # Step 1: Terraform init
         print(f"  → Running terraform init...")
         init_cmd = ['terraform', 'init', '-no-color']
